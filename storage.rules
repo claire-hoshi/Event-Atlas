@@ -1,0 +1,22 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() { return request.auth != null; }
+    function isOrganizer() {
+      return isSignedIn() && (request.auth.token.role in ['organizer', 'organization', 'org']);
+    }
+
+    // Event images: organizers only
+    match /eventImages/{eventId}/{fileName} {
+      allow read: if true;
+      allow write: if isOrganizer();
+    }
+
+    // Profile images: owner only
+    match /profileImages/{uid} {
+      allow read: if true;
+      allow write: if isSignedIn() && request.auth.uid == uid;
+    }
+  }
+}
+

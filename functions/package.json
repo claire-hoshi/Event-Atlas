@@ -1,0 +1,10 @@
+{
+  "name": "event-atlas-functions",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "22" },
+  "dependencies": {
+    "firebase-admin": "^12.6.0",
+    "firebase-functions": "^5.0.0"
+  }
+}

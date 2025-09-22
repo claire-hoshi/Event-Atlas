@@ -1,0 +1,33 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() { return request.auth != null; }
+    function isOrganizer() {
+      return isSignedIn() && (request.auth.token.role in ['organizer', 'organization', 'org']);
+    }
+
+    match /events/{eventId} {
+      allow read: if true;
+      allow create: if isOrganizer() && request.resource.data.organizerUid == request.auth.uid;
+      allow update, delete: if isOrganizer() && resource.data.organizerUid == request.auth.uid;
+    }
+
+    match /users/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    match /roleRequests/{uid} {
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      // Users should not update status themselves
+      allow update, delete: if false;
+    }
+
+    // Allowlist managed by admins via callable function
+    match /orgAllowlist/{email} {
+      allow read: if false; // hide
+      allow write: if false; // use callable function
+    }
+  }
+}
+
