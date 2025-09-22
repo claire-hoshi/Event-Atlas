@@ -1,0 +1,42 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+.Trash/
+.Spotlight-V100
+.DocumentRevisions-V100
+.fseventsd
+.TemporaryItems
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-*.log*
+pnpm-*.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Firebase
+.firebase/
+
+# Logs
+*.log
+logs/
+*.out
+*.err
+
+# Editors
+.vscode/
+.idea/
+.history/
+
+# Env
+.env
+.env.*
+.env.local
+
+# Misc
+*~
+*.swp
+*.swo
