@@ -12,6 +12,12 @@ service firebase.storage {
       allow write: if isOrganizer();
     }
 
+    // Draft images: organizers only (non-public)
+    match /draftImages/{draftId}/{fileName} {
+      allow read: if isOrganizer();
+      allow write: if isOrganizer();
+    }
+
     // Profile images: owner only
     match /profileImages/{uid} {
       allow read: if true;
@@ -19,4 +25,3 @@ service firebase.storage {
     }
   }
 }
-

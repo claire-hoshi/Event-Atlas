@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>My Drafts</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.4.1/semantic.min.css" />
+  <link rel="stylesheet" href="style.css?v=20251009-1" />
+</head>
+<body class="create-event-page">
+  <!-- Global Left Rail Navigation (static across pages) -->
+  <div class="left-rail" id="left-rail" aria-label="Navigation">
+    <div class="nav-row">
+      <button id="rail-home-btn" class="rail-btn event-style" title="Home" aria-label="Home">
+        <i class="home icon"></i>
+      </button>
+    </div>
+    <div class="nav-row">
+      <button id="rail-create-btn" class="rail-btn event-style" title="Create Event" aria-label="Create Event">
+        <i class="plus icon"></i>
+      </button>
+    </div>
+    <div class="nav-row">
+      <button id="rail-drafts-btn" class="rail-btn" title="My Drafts" aria-label="My Drafts">
+        <i class="save outline icon"></i>
+      </button>
+    </div>
+    <div class="rail-spacer"></div>
+    <div class="nav-row">
+      <button id="rail-profile-btn" class="rail-btn" title="Profile & Settings" aria-label="Open Profile">
+        <img id="rail-avatar" alt="avatar" />
+        <i class="user outline icon"></i>
+      </button>
+    </div>
+    
+  </div>
+  <section>
+    <div class="ui segment" style="width:100%; max-width:960px; margin:0 auto;">
+      <div class="section-title">Events</div>
+      <div class="account-panel">
+        <div class="drafts-tabs">
+          <div class="tabs-left">
+            <a class="tab active" id="tab-drafts" href="#">Drafts <span class="pill" id="count-drafts">0</span></a>
+            <a class="tab" id="tab-published" href="#">Upcoming events <span class="pill" id="count-published">0</span></a>
+            <a class="tab" id="tab-past" href="#">Past events <span class="pill" id="count-past">0</span></a>
+          </div>
+          <div class="tabs-spacer"></div>
+          <a class="ui button primary tiny create-new" href="/create-event">+ Create New Event</a>
+        </div>
+
+        <!-- toolbar removed per request -->
+
+        <div id="drafts-guard" class="ui warning message" style="display:none;">Only organizers can view drafts.</div>
+        <div id="drafts-error" class="ui error message" style="display:none;"></div>
+        <div id="drafts-empty" class="ui info message" style="display:none;">No drafts yet. Start by saving a draft from the Create Event page.</div>
+        <div id="drafts-list" class="drafts-table"></div>
+        
+      </div>
+    </div>
+  </section>
+
+  <script src="firebase.js?v=20251009-1" type="module"></script>
+  <script src="drafts.js?v=20251009-1" type="module"></script>
+  <script src="nav.js?v=20251009-1" type="module"></script>
+</body>
+</html>

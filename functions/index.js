@@ -3,10 +3,17 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { beforeUserSignedIn } from 'firebase-functions/v2/identity';
-import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { onDocumentCreated, onDocumentUpdated } from 'firebase-functions/v2/firestore';
+import { getMessaging } from 'firebase-admin/messaging';
+import sgMail from '@sendgrid/mail';
 
 initializeApp();
 const db = getFirestore();
+// Set SendGrid API key from env or functions config
+try {
+  const key = process.env.SENDGRID_API_KEY || process.env.SENDGRID_KEY || (/** @type any */(process)).env?.sendgrid?.key || '';
+  if (key) sgMail.setApiKey(key);
+} catch {}
 
 // Blocking function: set role based on allowlist before the session starts
 export const beforeSignInSetRole = beforeUserSignedIn(async (event) => {
@@ -107,5 +114,130 @@ export const autoApproveRoleRequests = onDocumentCreated('roleRequests/{uid}', a
     await snap.ref.set({ status: 'approved', approvedAt: Date.now() }, { merge: true });
   } catch (e) {
     console.error('autoApproveRoleRequests failed', e);
+  }
+});
+
+// Notify subscribers when key event fields change
+export const onEventUpdatedNotify = onDocumentUpdated('events/{eventId}', async (event) => {
+  try {
+    const before = event.data?.before?.data() || {};
+    const after = event.data?.after?.data() || {};
+    if (!after || !before) return;
+    const changed = [];
+    if (String(before.startTime||'') !== String(after.startTime||'')) changed.push('time');
+    if (String(before.endTime||'') !== String(after.endTime||'')) changed.push('time');
+    if (String(before.locationName||'') !== String(after.locationName||'')) changed.push('location');
+    if (Number(before.lat||0) !== Number(after.lat||0) || Number(before.lng||0) !== Number(after.lng||0)) changed.push('location');
+    if (!changed.length) return; // nothing important changed
+
+    const eventId = event.params.eventId;
+    const title = after.title || 'Event updated';
+    let body = '';
+    if (changed.includes('time')) body += 'Time updated. ';
+    if (changed.includes('location')) body += 'Location updated.';
+    const url = `https://sample-depauweventmap.web.app/#event=${eventId}`;
+
+    // Fetch tokens subscribed to this event
+    const snap = await db.collection('eventSubscriptions').doc(String(eventId)).collection('tokens').get();
+    if (snap.empty) return;
+    const tokens = snap.docs.map(d => d.id);
+    const payload = {
+      notification: { title: `Updated: ${title}`, body },
+      data: { eventId: String(eventId), url },
+      webpush: { fcmOptions: { link: url } }
+    };
+    // Send in chunks of 500
+    const chunkSize = 500;
+    for (let i = 0; i < tokens.length; i += chunkSize) {
+      const slice = tokens.slice(i, i + chunkSize);
+      const res = await getMessaging().sendEachForMulticast({ tokens: slice, ...payload });
+      // Prune invalid tokens
+      const toDelete = [];
+      res.responses.forEach((r, idx) => {
+        const err = r.error;
+        if (err && String(err.code || '').includes('registration-token-not-registered')) {
+          toDelete.push(slice[idx]);
+        }
+      });
+      await Promise.all(toDelete.map(t => db.collection('eventSubscriptions').doc(String(eventId)).collection('tokens').doc(t).delete().catch(()=>{})));
+    }
+  } catch (e) {
+    console.error('onEventUpdatedNotify failed', e);
+  }
+});
+
+// Organizer-only: return list of subscribers (emails) for an event
+export const getEventSubscribers = onCall({ cors: true }, async (request) => {
+  const caller = request.auth;
+  if (!caller) throw new HttpsError('unauthenticated', 'Must be signed in.');
+  const uid = caller.uid;
+  const eventId = String(request.data?.eventId || '');
+  if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
+
+  // Check organizer claim
+  const role = String(caller.token?.role || 'student').toLowerCase();
+  if (!['organizer','organization','org'].includes(role)) {
+    throw new HttpsError('permission-denied', 'Organizer role required.');
+  }
+
+  // Verify ownership of the event
+  const evSnap = await db.collection('events').doc(eventId).get();
+  if (!evSnap.exists) throw new HttpsError('not-found', 'Event not found');
+  const ev = evSnap.data();
+  if (String(ev?.organizerUid || '') !== String(uid)) {
+    throw new HttpsError('permission-denied', 'Only the event organizer can view subscribers.');
+  }
+
+  // Read subscriptions (server-side, not allowed directly by rules)
+  const subsSnap = await db.collection('eventSubscriptions').doc(eventId).collection('tokens').get();
+  const list = subsSnap.docs.map(d => {
+    const x = d.data() || {};
+    return { uid: x.uid || null, email: x.email || null, subscribedAt: x.subscribedAt || null };
+  });
+  // Sort by subscribedAt desc if available
+  list.sort((a,b) => (b.subscribedAt?.toMillis?.()||0) - (a.subscribedAt?.toMillis?.()||0));
+  return { items: list };
+});
+
+// Send a confirmation email when a user subscribes to an event
+export const onUserSubscribedEmail = onDocumentCreated('userSubscriptions/{uid}/events/{eventId}', async (event) => {
+  try {
+    const uid = event.params.uid;
+    const eventId = event.params.eventId;
+    if (!uid || !eventId) return;
+
+    // If SendGrid is not configured, skip silently
+    const hasSG = !!(sgMail && (sgMail).sgClient);
+    // get user
+    const user = await getAuth().getUser(uid).catch(() => null);
+    const toEmail = user?.email || '';
+    if (!toEmail || !hasSG) return; // nothing to send
+
+    // fetch event for details
+    const evSnap = await db.collection('events').doc(eventId).get();
+    const ev = evSnap.exists ? evSnap.data() : {};
+    const title = ev?.title || 'Event';
+    const when = ev?.startTime ? new Date(ev.startTime).toLocaleString() : '';
+    const where = ev?.locationName ? ` at ${ev.locationName}` : '';
+    const link = `https://sample-depauweventmap.web.app/#event=${eventId}`;
+
+    const msg = {
+      to: toEmail,
+      from: {
+        email: 'no-reply@sample-depauweventmap.web.app',
+        name: 'Event Atlas'
+      },
+      subject: `Subscribed: ${title}`,
+      text: `You subscribed to updates for "${title}"${when ? ' on '+when : ''}${where}. We will notify you if time or location changes. Open: ${link}`,
+      html: `<div style="font-family:system-ui,Segoe UI,Arial,sans-serif;">
+              <h2 style="margin:0 0 8px;">Subscribed to: ${title}</h2>
+              <p style="margin:0 0 6px;">${when ? 'When: '+when : ''}${where ? '<br/>'+where : ''}</p>
+              <p style="margin:12px 0;">We will notify you if time or location changes.</p>
+              <p><a href="${link}">View event</a></p>
+            </div>`
+    };
+    await sgMail.send(msg);
+  } catch (e) {
+    console.error('onUserSubscribedEmail failed', e);
   }
 });

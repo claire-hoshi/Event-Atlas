@@ -12,6 +12,13 @@ service cloud.firestore {
       allow update, delete: if isOrganizer() && resource.data.organizerUid == request.auth.uid;
     }
 
+    // Draft events: private to the organizer
+    match /eventDrafts/{draftId} {
+      allow read: if isOrganizer() && resource.data.organizerUid == request.auth.uid;
+      allow create: if isOrganizer() && request.resource.data.organizerUid == request.auth.uid;
+      allow update, delete: if isOrganizer() && resource.data.organizerUid == request.auth.uid;
+    }
+
     match /users/{uid} {
       allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
@@ -23,6 +30,29 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Users can subscribe/unsubscribe to event notifications
+    match /eventSubscriptions/{eventId}/tokens/{token} {
+      allow read: if false;
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow delete: if isSignedIn();
+      allow update: if false;
+    }
+
+    // User-facing list of subscriptions
+    match /userSubscriptions/{uid}/events/{eventId} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Explicit event registrations with name/email (organizer-visible)
+    match /eventRegistrations/{eventId}/users/{uid} {
+      // A signed-in user can create/delete their own registration
+      allow create, delete: if isSignedIn() && request.auth.uid == uid;
+      allow update: if false;
+      // Only the organizer who owns the event can read the list
+      allow read: if isOrganizer() &&
+        get(/databases/$(database)/documents/events/$(eventId)).data.organizerUid == request.auth.uid;
+    }
+
     // Allowlist managed by admins via callable function
     match /orgAllowlist/{email} {
       allow read: if false; // hide
@@ -30,4 +60,3 @@ service cloud.firestore {
     }
   }
 }
-

@@ -6,7 +6,7 @@
     <title>Event Atlas</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.4.1/semantic.min.css" />
     <!-- Load custom stylesheet after Semantic UI so our rules can override library defaults -->
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=20251025-5">
     <!-- Leaflet CSS -->
     <link
       rel="stylesheet"
@@ -14,10 +14,17 @@
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
       crossorigin=""
     />
+    <!-- Flatpickr for calendar-style time filter -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css" />
 </head>
 
 <body>
     <section>
+        <!-- Lightweight loading state -->
+        <div id="app-loading" style="display:flex;align-items:center;justify-content:center;position:fixed;inset:0;background:#fff;z-index:5;">
+          <div class="ui text loader active">Loading your session…</div>
+        </div>
+
         <!-- Attendee Map View (visible after login) -->
         <div class="attendee-layout" id="attendee-view" style="display:none;">
             <aside class="attendee-sidebar">
@@ -27,7 +34,6 @@
                             <button id="open-profile-btn" class="icon-button" title="Menu / Profile" aria-label="Open profile" style="display:none;">
                                 <i class="bars icon"></i>
                             </button>
-                            <h2 class="attendee-title" style="margin-left:8px;">Event Atlas</h2>
                         </div>
                         <div class="topbar-right" style="display:none;">
                             <button id="create-event-btn" class="icon-button primary" title="Create Event" aria-label="Create Event" style="display:none;">
@@ -36,24 +42,57 @@
                         </div>
                     </div>
 
-                    <!-- Simple title (no box, no subtitle) -->
-                    <h2 class="site-title">Event Atlas</h2>
+                    <!-- Site title removed per request -->
 
                     <!-- Explore tab -->
                     <div id="explore-view">
                         <div class="attendee-search">
-                            <div class="search-input" style="display:none;">
-                                <i class="search icon"></i>
-                                <input id="event-search" type="text" placeholder="Search events..." />
+                            <div class="search-title">Search Events</div>
+                            <div class="split-search" id="split-search">
+                                <div class="split-left">
+                                    <i class="search icon" aria-hidden="true"></i>
+                                    <input id="event-search" type="text" placeholder="Search events..." aria-label="Search events by title, org, description" />
+                                </div>
+                                <div class="split-divider" aria-hidden="true"></div>
+                                <div class="split-right">
+                                    <input id="location-input" type="text" placeholder="Location" aria-label="Filter by location" list="location-suggestions" />
+                                    <button id="clear-location" class="clear-btn" type="button" aria-label="Clear location">&times;</button>
+                                </div>
+                                <button id="search-submit" class="search-round" type="button" aria-label="Apply search"><i class="search icon"></i></button>
+                                <datalist id="location-suggestions"></datalist>
                             </div>
-                            <div class="attendee-filters" style="display:none;">
-                                <select id="category-filter" class="ui dropdown small" style="display:none;">
-                                    <option value="all">All Events</option>
-                                </select>
-                                <select id="time-filter" class="ui dropdown small" style="display:none;">
-                                    <option value="all">All Time</option>
-                                </select>
+                            <div class="filter-row">
+                                <!-- Inline calendar below replaces this button; kept for fallback -->
+                                <button id="time-filter-btn" class="pill-select" type="button" aria-label="Filter by time" style="display:none;">All Time</button>
+                                <input id="time-range" type="text" hidden aria-hidden="true" />
                             </div>
+                            <!-- Calendar toolbar: presets and navigation -->
+                            <div class="cal-toolbar" id="cal-toolbar">
+                              <div class="cal-left">
+                                <button class="cal-pill" id="cal-today" type="button">Today</button>
+                                <button class="cal-pill" id="cal-day" type="button">Day</button>
+                                <button class="cal-pill" id="cal-week" type="button">Week</button>
+                                <button class="cal-pill" id="cal-month" type="button">Month</button>
+                                <button class="cal-pill" id="cal-all" type="button">All</button>
+                              </div>
+                              <div class="cal-right">
+                                <input id="jump-day-input" class="jump-input" type="date" aria-label="Jump to day" />
+                                <button class="cal-nav" id="cal-prev" type="button" aria-label="Previous">&#x276E;</button>
+                                <button class="cal-nav" id="cal-next" type="button" aria-label="Next">&#x276F;</button>
+                              </div>
+                            </div>
+                            <div class="inline-calendar" id="inline-calendar">
+                                <div class="inline-calendar-header">
+                                    <div class="title">Select Dates</div>
+                                    <button id="clear-dates-btn" class="link-clear" type="button">Clear</button>
+                                </div>
+                                <!-- Flatpickr will render here -->
+                            </div>
+                            <div class="filter-actions">
+                                <button id="open-filter-btn" class="pill-select" type="button" aria-label="Open filters">Filter results</button>
+                            </div>
+                            <div class="filter-title">Event Categories</div>
+                            <div id="category-chips" class="chip-group" aria-label="Filter by category"></div>
                             <div class="attendee-count" id="event-count">0 events found</div>
                         </div>
                         <!-- Organizer-only tabs -->
@@ -64,6 +103,28 @@
 
                         <div class="attendee-section-title" id="section-title">Upcoming Events</div>
                         <div class="attendee-list" id="event-list"></div>
+                    </div>
+                    <div id="saved-view" style="display:none;">
+                        <div class="section-title">Saved Events</div>
+                        <div class="account-panel">
+                            <div id="saved-list" class="attendee-list"></div>
+                        </div>
+                    </div>
+
+                    <!-- Notifications tab -->
+                    <div id="notifications-view" style="display:none;">
+                        <div class="section-title">Notifications</div>
+                        <div class="account-panel">
+                            <div class="account-row" id="notif-perm-row">
+                                <div class="row-left"><i class="bell outline icon"></i> Push Permission</div>
+                                <div class="row-right"><span id="notif-perm-status">Unknown</span>
+                                    <button id="notif-enable-btn" class="ui button tiny" type="button">Enable</button>
+                                </div>
+                            </div>
+                            <div class="row-divider"></div>
+                            <div class="account-row"><div class="row-left"><i class="list icon"></i> Subscribed Events</div><div class="row-right"></div></div>
+                            <div id="subscribed-list" class="attendee-list"></div>
+                        </div>
                     </div>
 
                     <!-- Profile tab -->
@@ -110,6 +171,7 @@
                         </div>
                         <div class="account-actions">
                             <button class="ui button primary tiny" id="open-event-form-btn" type="button" style="display:none;">Create Event</button>
+                            <button class="ui button tiny" id="open-drafts-btn" type="button" style="display:none;">My Drafts</button>
                             <button class="ui button red tiny" id="logout-btn" type="button">Log Out</button>
                         </div>
                     </div>
@@ -118,24 +180,46 @@
             <main class="attendee-map">
                 <div id="map"></div>
             </main>
-            <!-- Left rail with Profile (bottom) and Create (organizers only) -->
-            <div class="left-rail" id="left-rail" aria-label="Quick actions" style="display:none;">
-                <button id="rail-home-btn" class="rail-btn event-style" title="Home" aria-label="Home">
-                    <i class="map marker alternate icon"></i>
-                </button>
-                <button id="rail-create-btn" class="rail-btn event-style" title="Create Event" aria-label="Create Event" style="display:none;">
-                    <i class="plus icon"></i>
-                </button>
+            <!-- Sidebar navigation -->
+            <div class="left-rail" id="left-rail" aria-label="Navigation" style="display:none;">
+                <div class="nav-row">
+                  <button id="rail-home-btn" class="rail-btn event-style" title="Home" aria-label="Home">
+                      <i class="home icon"></i>
+                  </button>
+                </div>
+                <div class="nav-row">
+                  <button id="rail-saved-btn" class="rail-btn" title="Saved Events" aria-label="Saved Events">
+                      <i class="bookmark outline icon"></i>
+                  </button>
+                </div>
+                <div class="nav-row">
+                  <button id="rail-notify-btn" class="rail-btn" title="Notifications" aria-label="Notifications">
+                      <i class="bell outline icon"></i>
+                  </button>
+                </div>
+                <div class="nav-row">
+                  <button id="rail-create-btn" class="rail-btn event-style" title="Create Event" aria-label="Create Event" style="display:none;">
+                      <i class="plus icon"></i>
+                  </button>
+                </div>
+                <div class="nav-row">
+                  <button id="rail-drafts-btn" class="rail-btn" title="My Drafts" aria-label="My Drafts" style="display:none;">
+                      <i class="save outline icon"></i>
+                  </button>
+                </div>
                 <div class="rail-spacer"></div>
-                <button id="rail-profile-btn" class="rail-btn" title="Profile & Settings" aria-label="Open Profile">
-                    <img id="rail-avatar" alt="avatar" />
-                    <i class="user outline icon"></i>
-                </button>
+                <div class="nav-row">
+                  <button id="rail-profile-btn" class="rail-btn" title="Profile & Settings" aria-label="Open Profile">
+                      <img id="rail-avatar" alt="avatar" />
+                      <i class="user outline icon"></i>
+                  </button>
+                </div>
+                
             </div>
         </div>
 
         <!-- Sign-in view -->
-        <div class="signup-form" id="signup-form">
+        <div class="signup-form" id="signup-form" style="display:none;">
             <div class="login-card">
                 <div class="login-title">Welcome to Event Atlas!</div>
                 <div id="error-message" class="login-error"></div>
@@ -154,15 +238,126 @@
         </div>
     </section>
 
-    <script src="firebase.js" type="module"></script>
-    <script src="app.js" type="module"></script>
-    <script src="event.js" type="module"></script>
-    <!-- Leaflet JS -->
+    <!-- Event Detail Modal -->
+    <div id="event-modal" class="event-modal" style="display:none;" aria-hidden="true" role="dialog" aria-label="Event details">
+      <div class="event-modal-backdrop" id="event-modal-backdrop"></div>
+      <div class="event-modal-content" role="document">
+        <button id="event-modal-close" class="event-modal-close" aria-label="Close">&times;</button>
+        <div class="event-hero" id="event-hero" style="display:none;">
+          <img id="event-hero-img" alt="Event image" />
+        </div>
+        <div class="event-detail-body">
+          <h2 id="event-detail-title" class="event-detail-title"></h2>
+          <div class="event-detail-meta" id="event-detail-meta"></div>
+          <div class="event-actions">
+            <button id="event-interest-btn" class="btn-interest" type="button"><i class="heart outline icon"></i> Save event</button>
+            <a id="event-addcal-btn" class="btn-addcal" href="#" download>Add to calendar <i class="calendar plus outline icon"></i></a>
+          </div>
+
+          <div class="section-block">
+            <div class="section-header">
+              <div class="section-title-strong">About this Event</div>
+              <button id="event-view-map-btn" class="link-clear" type="button">View map</button>
+            </div>
+            <div class="about-grid">
+              <div class="about-row"><div class="label">Location</div><div class="value" id="event-about-location"></div></div>
+              <div class="about-row"><div class="label">Organizer</div><div class="value" id="event-about-org"></div></div>
+              <div class="about-row"><div class="label">Contact</div><div class="value" id="event-about-contact"></div></div>
+              <div class="about-row"><div class="label">Link</div><div class="value" id="event-about-link"></div></div>
+            </div>
+            <div class="event-detail-desc" id="event-detail-desc"></div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-title-strong">Event Details</div>
+            <div class="details-card">
+              <div class="detail-row"><div class="label">Category</div><div class="value" id="event-details-category"></div></div>
+              <div class="detail-row"><div class="label">Max Attendees</div><div class="value" id="event-details-max"></div></div>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-title-strong">See Who Is Interested</div>
+            <div class="interested-row">
+              <div><span id="event-interest-count">0</span> people are interested in this event</div>
+              <button id="event-interest-btn-2" class="btn-interest" type="button"><i class="heart outline icon"></i> Save event</button>
+            </div>
+          </div>
+
+          <!-- Organizer-only: Registered attendees list -->
+          <div class="section-block" id="owner-subscribers" style="display:none;">
+            <div class="section-title-strong">Registered Attendees</div>
+            <div id="subscriber-list" class="attendee-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Filter Panel Modal -->
+    <div id="filter-modal" class="filter-modal" aria-hidden="true" role="dialog" aria-label="Filter results" style="display:none;">
+      <div class="filter-backdrop" id="filter-backdrop"></div>
+      <div class="filter-sheet" role="document">
+        <div class="filter-header">
+          <div class="filter-title-strong">Filter results</div>
+          <button id="close-filter-btn" class="filter-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="filter-body">
+          <div class="filter-rowline">
+            <label class="filter-label">Sort By</label>
+            <select id="sort-select" class="filter-select">
+              <option value="date">Date</option>
+              <option value="title">Title</option>
+            </select>
+          </div>
+          <div class="filter-rowline">
+            <label class="filter-label">When</label>
+            <div class="when-box">
+              <button class="when-opt" data-range="today" type="button">Today</button>
+              <button class="when-opt" data-range="7" type="button">Next 7 Days</button>
+              <button class="when-opt" data-range="30" type="button">Next 30 Days</button>
+              <button class="when-opt" data-range="180" type="button">Next 6 Months</button>
+              <div class="when-cal-header">Select Date On A Calendar</div>
+              <div id="filter-calendar" class="filter-calendar"></div>
+            </div>
+          </div>
+          <!-- Stubs for future facets to match the template -->
+          <div class="filter-rowline">
+            <label class="filter-label">Audience</label>
+            <select class="filter-select" disabled><option>All Audiences</option></select>
+          </div>
+          <div class="filter-rowline">
+            <label class="filter-label">Event Format</label>
+            <select class="filter-select" disabled><option>All Event Formats</option></select>
+          </div>
+        </div>
+        <div class="filter-footer">
+          <button id="cancel-filter-btn" class="btn-cancel" type="button">Cancel</button>
+          <button id="apply-filter-btn" class="btn-apply" type="button">Apply filters</button>
+        </div>
+      </div>
+    </div>
+
+    <script>window.FCM_VAPID_KEY='BIF3fotOumTQGkQdAdXqoAhBa8UTuDCEbZ-3-9qrPVOJxBtjLYC0jqz3vBFgmO8EkaDPjNYqCz6ffYyt7_l8Ekg'; // TODO: set your Public VAPID key from Firebase Console → Cloud Messaging</script>
+    <script src="firebase.js?v=20251025-6" type="module"></script>
+    <script src="app.js?v=20251025-6" type="module"></script>
+    <script src="event.js?v=20251025-6" type="module"></script>
+    <!-- Leaflet JS (with fallback to jsDelivr if unpkg fails) -->
     <script
       src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
       integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
       crossorigin=""
     ></script>
-    <script src="map.js" type="module"></script>
+    <!-- Flatpickr for calendar-style time filter -->
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
+    <!-- Ensure Leaflet is present before loading map.js; load a fallback if needed -->
+    <script>
+      (function(){
+        function load(src, cb){ var s=document.createElement('script'); s.src=src; s.onload=cb; s.onerror=cb; document.head.appendChild(s); }
+        function start(){ var m=document.createElement('script'); m.type='module'; m.src='map.js?v=20251025-8'; document.body.appendChild(m); }
+        if (typeof window.L === 'object') { start(); }
+        else { load('https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js', start); }
+      })();
+    </script>
+    <script src="nav.js?v=20251025-6" type="module"></script>
 </body>
 </html>
