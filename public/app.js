@@ -210,6 +210,8 @@ onAuthStateChanged(auth, async (user) => {
     try { clearTimeout(loaderFallback); } catch {}
     if (appLoading) appLoading.style.display = 'none';
     if (user && user.email && user.email.toLowerCase().endsWith("@depauw.edu")) {
+        // Reserve space for the left rail when logged in
+        try { document.body.classList.add('with-rail'); } catch {}
         // Ensure the left rail is visible after sign-in
         try { const rail = document.getElementById('left-rail'); if (rail) rail.style.display = 'flex'; } catch {}
         if (userEmailText) userEmailText.textContent = user.email;
@@ -241,6 +243,8 @@ onAuthStateChanged(auth, async (user) => {
             if (requestOrgBtn) requestOrgBtn.style.display = 'inline-block';
         }
     } else {
+        // Remove rail spacing when logged out
+        try { document.body.classList.remove('with-rail'); } catch {}
         // Hide the left rail on sign-out
         try { const rail = document.getElementById('left-rail'); if (rail) rail.style.display = 'none'; } catch {}
         if (attendeeView) attendeeView.style.display = 'none';

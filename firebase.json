@@ -48,6 +48,7 @@
       { "source": "/index.html", "destination": "/", "type": 301 }
       ,{ "source": "/create-event.html", "destination": "/create-event", "type": 301 }
       ,{ "source": "/drafts.html", "destination": "/drafts", "type": 301 }
+      ,{ "source": "/admin.html", "destination": "/admin", "type": 301 }
     ],
     "ignore": [
       "firebase.json",

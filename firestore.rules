@@ -53,6 +53,17 @@ service cloud.firestore {
         get(/databases/$(database)/documents/events/$(eventId)).data.organizerUid == request.auth.uid;
     }
 
+    // Notifications feed per user
+    match /userNotifications/{uid}/items/{nid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Reports: anyone signed-in can create; only DSG admin can read/manage
+    match /reports/{rid} {
+      allow create: if isSignedIn();
+      allow read, update, delete: if isSignedIn() && request.auth.token.email == 'kureahoshi_2026@depauw.edu';
+    }
+
     // Allowlist managed by admins via callable function
     match /orgAllowlist/{email} {
       allow read: if false; // hide

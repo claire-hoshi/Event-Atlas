@@ -2,7 +2,7 @@ import { getMessaging, getToken, isSupported, onMessage } from "https://www.gsta
 import { getAuth } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js";
 import { getFirestore, doc, setDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
 
-const VAPID_KEY = (window.FCM_VAPID_KEY || '').trim();
+const VAPID_KEY = (window.FCM_VAPID_KEY || 'BIF3fotOumTQGkQdAdXqoAhBa8UTuDCEbZ-3-9qrPVOJxBtjLYC0jqz3vBFgmO8EkaDPjNYqCz6ffYyt7_l8Ekg').trim();
 const messagingPromise = (async () => {
   try {
     const supported = await isSupported();
@@ -63,17 +63,27 @@ export async function subscribeToEvent(eventId){
 
 export async function unsubscribeFromEvent(eventId){
   try {
-    const token = await getFcmToken();
     const db = getFirestore();
-    const ref = doc(db, 'eventSubscriptions', String(eventId), 'tokens', token);
-    await deleteDoc(ref).catch(()=>{});
-    const auth = getAuth();
-    const user = auth.currentUser;
-    if (user?.uid) {
-      const db = getFirestore();
-      const uref = doc(db, 'userSubscriptions', user.uid, 'events', String(eventId));
-      await deleteDoc(uref).catch(()=>{});
-    }
+    // Always remove from the userSubscriptions list so Saved view updates,
+    // even if the device doesn't have a push token.
+    try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+      if (user?.uid) {
+        const uref = doc(db, 'userSubscriptions', user.uid, 'events', String(eventId));
+        await deleteDoc(uref).catch(()=>{});
+      }
+    } catch {}
+
+    // Best-effort: if we can resolve an FCM token, also remove the token subscription document.
+    try {
+      const token = await getFcmToken();
+      if (token) {
+        const ref = doc(db, 'eventSubscriptions', String(eventId), 'tokens', token);
+        await deleteDoc(ref).catch(()=>{});
+      }
+    } catch { /* ignore; token not required to unsave */ }
+
     return { ok:true };
   } catch (e) { return { ok:false, reason: e?.message || 'error' }; }
 }

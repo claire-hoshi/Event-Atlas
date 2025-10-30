@@ -4,6 +4,7 @@ import { messagingSupported, subscribeToEvent, unsubscribeFromEvent } from './me
 import {
   getFirestore,
   collection,
+  addDoc,
   getDocs,
   query,
   orderBy,
@@ -18,20 +19,43 @@ import {
 
 const auth = getAuth();
 const db = getFirestore();
+const functionsRef = getFunctions(undefined, 'us-central1');
 
 // DOM references
 const attendeeView = document.getElementById("attendee-view");
 const eventListEl = document.getElementById("event-list");
 const searchInput = document.getElementById("event-search");
+// Location modal elements (new UI)
+const openLocationBtn = document.getElementById('open-location-btn');
+const locationModal = document.getElementById('location-modal');
+const locationBackdrop = document.getElementById('location-backdrop');
+const closeLocationBtn = document.getElementById('close-location-btn');
+const cancelLocationBtn = document.getElementById('cancel-location-btn');
+const applyLocationBtn = document.getElementById('apply-location-btn');
+const locationModalInput = document.getElementById('location-modal-input');
+const locationSuggestionsList = document.getElementById('location-suggestions-list');
+// Legacy inline controls (may or may not exist)
 const locationInput = document.getElementById('location-input');
 const clearLocationBtn = document.getElementById('clear-location');
+const searchSubmitBtn = document.getElementById('search-submit');
 const timeFilterBtn = document.getElementById('time-filter-btn');
 const timeRangeInput = document.getElementById('time-range');
 const inlineCalendar = document.getElementById('inline-calendar');
 const clearDatesBtn = document.getElementById('clear-dates-btn');
 const categoryChipsEl = document.getElementById("category-chips");
+const categoryListEl = document.getElementById('category-list');
+// Categories sheet controls
+const openCatsBtn = document.getElementById('open-cats-btn');
+const categoriesModal = document.getElementById('categories-modal');
+const categoriesBackdrop = document.getElementById('categories-backdrop');
+const closeCatsBtn = document.getElementById('close-cats-btn');
+const cancelCatsBtn = document.getElementById('cancel-cats-btn');
+const applyCatsBtn = document.getElementById('apply-cats-btn');
+const categoriesChiplist = document.getElementById('categories-chiplist');
+const clearCatsBtn = document.getElementById('clear-categories');
 // Filter modal controls
 const openFilterBtn = document.getElementById('open-filter-btn');
+const suggestedLocationsEl = document.getElementById('suggested-locations');
 const filterModal = document.getElementById('filter-modal');
 const filterBackdrop = document.getElementById('filter-backdrop');
 const closeFilterBtn = document.getElementById('close-filter-btn');
@@ -44,14 +68,22 @@ const profileView = document.getElementById("profile-view");
 const savedView = document.getElementById('saved-view');
 const savedList = document.getElementById('saved-list');
 const notificationsView = document.getElementById('notifications-view');
-const subscribedList = document.getElementById('subscribed-list');
+const subscribedList = null;
 const notifEnableBtn = document.getElementById('notif-enable-btn');
 const notifPermStatus = document.getElementById('notif-perm-status');
+const notifFeed = document.getElementById('notif-feed');
+const notifMarkAll = document.getElementById('notif-mark-all');
 const openProfileBtn = document.getElementById("open-profile-btn");
 const closeProfileBtn = document.getElementById("close-profile-btn");
 const leftRail = document.getElementById('left-rail');
+const finalFilterBtn = document.getElementById('final-filter-btn');
+const filterSummaryEl = document.getElementById('filter-summary');
+const clearFiltersBtn = document.getElementById('clear-filters-btn');
+const filtersCountEl = document.getElementById('filters-count');
 const railProfileBtn = document.getElementById('rail-profile-btn');
 const railHomeBtn = document.getElementById('rail-home-btn');
+const railAdminBtn = document.getElementById('rail-admin-btn');
+const railReportBtn = document.getElementById('rail-report-btn');
 const orgTabs = document.getElementById('org-tabs');
 const tabMy = document.getElementById('tab-my');
 const tabOthers = document.getElementById('tab-others');
@@ -68,9 +100,14 @@ let isOrganizer = false;
 let myOrgName = '';
 let currentScope = 'all'; // 'all' for students, 'my' or 'others' for organizers
 let currentUid = null;
-let currentCategory = 'all';
+let currentCategory = 'all'; // kept for backward compatibility
+let currentCategories = [];   // multi-select active values
 let currentQuery = '';
 let currentLocation = '';
+// Pending values typed by the user; applied only when pressing the search button or Enter
+let pendingQuery = '';
+let pendingLocation = '';
+let pendingCategory = 'all';
 let timeStartMs = NaN, timeEndMs = NaN;
 let fpRange = null;
 let fpPanel = null;
@@ -94,8 +131,17 @@ const CATEGORY_COLORS = {
 function toMs(value) {
   try {
     if (!value) return NaN;
+    // Firestore Timestamp
     if (typeof value?.toMillis === 'function') return value.toMillis();
-    const d = new Date(value); return d.getTime();
+    // Numbers: allow seconds or milliseconds
+    if (typeof value === 'number') {
+      // If value looks like seconds (10 digits), convert to ms
+      const ms = value < 1e12 ? value * 1000 : value;
+      return ms;
+    }
+    // ISO/date-like strings
+    const d = new Date(value);
+    return d.getTime();
   } catch { return NaN; }
 }
 
@@ -146,9 +192,11 @@ function passesTimeFilter(evt) {
 }
 
 function passesCategoryFilter(evt) {
-  if (!currentCategory || currentCategory === 'all') return true;
+  // Multi-select logic: no selection or includes 'all' => pass
+  if (!currentCategories || currentCategories.length === 0) return true;
+  if (currentCategories.includes('all')) return true;
   const c = String(evt.category || '').trim();
-  return c === currentCategory;
+  return currentCategories.includes(c);
 }
 
 function passesLocationFilter(evt) {
@@ -205,6 +253,7 @@ async function renderListAndMarkers() {
   markersLayer.clearLayers();
 
   const filtered = allEvents.filter((e) => passesTimeFilter(e) && passesCategoryFilter(e) && passesLocationFilter(e) && passesSearch(e));
+  const visibleFiltered = filtered.filter(e => (e.published !== false) && !e.unpublishedAt);
   // Optional sort
   if (currentSort === 'title') {
     filtered.sort((a,b) => String(a.title||'').localeCompare(String(b.title||'')));
@@ -213,15 +262,15 @@ async function renderListAndMarkers() {
     filtered.sort((a,b) => (toMs(a.startTime)||0) - (toMs(b.startTime)||0));
   }
   // Students: count only upcoming; Organizers: count all
-  const countVisible = isOrganizer ? filtered.length : filtered.filter(isUpcoming).length;
+  const countVisible = isOrganizer ? filtered.length : visibleFiltered.filter(isUpcoming).length;
   updateCount(countVisible);
 
   const byIdMarker = new Map();
   const bounds = [];
 
   // Grouping
-  const up = filtered.filter(isUpcoming);
-  const past = filtered.filter(e => !isUpcoming(e));
+  const up = visibleFiltered.filter(isUpcoming);
+  const past = visibleFiltered.filter(e => !isUpcoming(e));
   const groups = isOrganizer
     ? [ { title: 'Upcoming events', items: up }, { title: 'Past events', items: past } ]
     : [ { title: '', items: up } ];
@@ -316,6 +365,19 @@ async function renderListAndMarkers() {
   map.on('popupopen', onPopupOpen);
 }
 
+// Apply search filters from the pending values in inputs
+function applySearchFilters(){
+  try {
+    // If inputs exist, sync pending from their current values first
+    if (searchInput) pendingQuery = searchInput.value || '';
+    if (locationInput) pendingLocation = locationInput.value || '';
+  } catch {}
+  currentQuery = pendingQuery || '';
+  currentLocation = pendingLocation || '';
+  renderListAndMarkers();
+  updateFilterSummary();
+}
+
 // Wire up popup to open full-screen details
 function onPopupOpen(e){
   try {
@@ -361,6 +423,7 @@ async function openEventDetail(evt){
   const interested2 = document.getElementById('event-interest-btn-2');
   const interestCount = document.getElementById('event-interest-count');
   const viewMapBtn = document.getElementById('event-view-map-btn');
+  const reportBtn = document.getElementById('event-report-btn');
   const ownerSubs = document.getElementById('owner-subscribers');
   const subsList = document.getElementById('subscriber-list');
   if (!modal) return;
@@ -374,6 +437,26 @@ async function openEventDetail(evt){
   descEl.textContent = desc || '';
   if (evt.imageURL) { hero.style.display='block'; heroImg.src = evt.imageURL; }
   else { hero.style.display='none'; try { heroImg.removeAttribute('src'); } catch {} }
+
+  // Ensure Saved state is consistent with userSubscriptions so the Saved page reflects it
+  try {
+    const key = `interest:${evt.__id}`;
+    const isSaved = localStorage.getItem(key) === '1';
+    const user = auth.currentUser;
+    if (user) {
+      const usRef = doc(db, 'userSubscriptions', user.uid, 'events', String(evt.__id));
+      if (isSaved) {
+        await setDoc(usRef, {
+          eventId: String(evt.__id),
+          title: evt.title || '',
+          startTime: evt.startTime || null,
+          endTime: evt.endTime || null,
+          locationName: evt.locationName || null,
+          savedAt: serverTimestamp()
+        }, { merge: true });
+      }
+    }
+  } catch {}
   // Adjust actions for organizer-owner vs student
   try {
     const owner = isOrganizer && String(evt.organizerUid||'') === String(currentUid||'');
@@ -397,7 +480,7 @@ async function openEventDetail(evt){
     } else {
       if (interestedBtn) interestedBtn.style.display='';
       if (interestedBtn2) interestedBtn2.style.display='';
-      if (addCalBtn) addCalBtn.style.display='';
+      if (addCalBtn) addCalBtn.style.display='none';
       const extra = actions && actions.querySelector('[data-edit-event]'); if (extra) extra.remove();
     }
   } catch {}
@@ -457,11 +540,30 @@ async function openEventDetail(evt){
       const key = `interest:${evt.__id}`;
       const currently = localStorage.getItem(key) === '1';
       if (sup && !currently) {
-        const res = await subscribeToEvent(evt.__id);
-        if (res.ok) localStorage.setItem(key, '1');
+        // Try to subscribe for push; even if it fails/denied, still save the event locally
+        try {
+          const res = await subscribeToEvent(evt.__id);
+          if (!res || res.ok !== true) {
+            // Permission denied or error: still mark as saved (no notifications)
+            localStorage.setItem(key, '1');
+          } else {
+            localStorage.setItem(key, '1');
+          }
+        } catch {
+          localStorage.setItem(key, '1');
+        }
       } else if (sup && currently) {
-        const res = await unsubscribeFromEvent(evt.__id);
-        if (res.ok) localStorage.setItem(key, '0');
+        // Try to unsubscribe; even if it fails, toggle off locally
+        try {
+          const res = await unsubscribeFromEvent(evt.__id);
+          if (!res || res.ok !== true) {
+            localStorage.setItem(key, '0');
+          } else {
+            localStorage.setItem(key, '0');
+          }
+        } catch {
+          localStorage.setItem(key, '0');
+        }
       } else {
         // Fallback to local toggle only
         localStorage.setItem(key, currently ? '0' : '1');
@@ -513,13 +615,18 @@ async function openEventDetail(evt){
       try { if (typeof evt.lat === 'number' && typeof evt.lng === 'number') { map.setView([evt.lat, evt.lng], Math.max(map.getZoom(), 16)); } } catch {}
     });
   }
+  // Reporting
+  if (reportBtn && !reportBtn._bound) {
+    reportBtn._bound = true;
+    reportBtn.addEventListener('click', () => openReportModal(evt));
+  }
   // Organizer-owner: show subscriber list via callable function
   try {
     const owner = isOrganizer && String(evt.organizerUid||'') === String(currentUid||'');
     if (owner && ownerSubs && subsList) {
       ownerSubs.style.display = '';
-      subsList.innerHTML = '<div style="color:#6b7280;">Loading…</div>';
-      const fn = httpsCallable(getFunctions(), 'getEventSubscribers');
+      subsList.innerHTML = '';
+      const fn = httpsCallable(functionsRef, 'getEventSubscribers');
       const res = await fn({ eventId: String(evt.__id) });
       const items = Array.isArray(res.data?.items) ? res.data.items : [];
       subsList.innerHTML = '';
@@ -544,31 +651,140 @@ async function openEventDetail(evt){
   if (closeBtn && !closeBtn._bound) { closeBtn._bound = true; closeBtn.addEventListener('click', close); }
 }
 
+// Report modal wiring
+let currentReportEvent = null;
+function openReportModal(evt){
+  currentReportEvent = evt || null;
+  const modal = document.getElementById('report-modal');
+  const typeSel = document.getElementById('report-type');
+  const rowAtt = document.getElementById('report-attendee-row');
+  const rowEvent = document.getElementById('report-event-row');
+  const rowEventOrg = document.getElementById('report-event-org-row');
+  const eventTitleInput = document.getElementById('report-event-title');
+  const eventOrgInput = document.getElementById('report-event-org');
+  const details = document.getElementById('report-details');
+  const error = document.getElementById('report-error');
+  const success = document.getElementById('report-success');
+  if (!modal) return;
+  if (typeSel) typeSel.value = 'event';
+  if (rowAtt) rowAtt.style.display = 'none';
+  if (rowEvent) rowEvent.style.display = currentReportEvent ? 'none' : '';
+  if (rowEventOrg) rowEventOrg.style.display = currentReportEvent ? 'none' : '';
+  if (eventTitleInput) eventTitleInput.value = currentReportEvent?.title || '';
+  if (eventOrgInput) eventOrgInput.value = currentReportEvent?.organization || '';
+  if (details) details.value='';
+  if (error) error.style.display='none';
+  if (success) success.style.display='none';
+  modal.style.display='block'; modal.setAttribute('aria-hidden','false');
+}
+
+try {
+  const modal = document.getElementById('report-modal');
+  const backdrop = document.getElementById('report-backdrop');
+  const closeBtn = document.getElementById('report-close');
+  const cancelBtn = document.getElementById('report-cancel');
+  const submitBtn = document.getElementById('report-submit');
+  const typeSel = document.getElementById('report-type');
+  const rowAtt = document.getElementById('report-attendee-row');
+  const rowEvent = document.getElementById('report-event-row');
+  const attEmail = document.getElementById('report-attendee-email');
+  const eventRef = document.getElementById('report-event-ref');
+  const reasonSel = document.getElementById('report-reason');
+  const details = document.getElementById('report-details');
+  const error = document.getElementById('report-error');
+  const success = document.getElementById('report-success');
+  const hide = () => { if (!modal) return; modal.style.display='none'; modal.setAttribute('aria-hidden','true'); };
+  if (backdrop && !backdrop._bound) { backdrop._bound = true; backdrop.addEventListener('click', hide); }
+  if (closeBtn && !closeBtn._bound) { closeBtn._bound = true; closeBtn.addEventListener('click', hide); }
+  if (cancelBtn && !cancelBtn._bound) { cancelBtn._bound = true; cancelBtn.addEventListener('click', hide); }
+  if (typeSel && !typeSel._bound) { typeSel._bound = true; typeSel.addEventListener('change', ()=> { if (rowAtt) rowAtt.style.display = typeSel.value === 'attendee' ? '' : 'none'; if (rowEvent) rowEvent.style.display = (typeSel.value === 'event' && !currentReportEvent) ? '' : 'none'; }); }
+  if (submitBtn && !submitBtn._bound) {
+    submitBtn._bound = true;
+    submitBtn.addEventListener('click', async () => {
+      try {
+        const user = auth.currentUser; if (!user) { if (error){ error.textContent='Sign in required.'; error.style.display=''; } return; }
+        const parseEventId = (v) => {
+          try {
+            const s = String(v||'').trim(); if (!s) return '';
+            const m = s.match(/event=([^&#]+)/); if (m) return decodeURIComponent(m[1]);
+            return s; // assume raw ID
+          } catch { return ''; }
+        };
+        const manualEventId = parseEventId(eventRef?.value || '');
+        const payload = {
+          type: typeSel?.value || 'event',
+          eventId: String(currentReportEvent?.__id || manualEventId || ''),
+          eventTitle: String(currentReportEvent?.title || ''),
+          organizerUid: String(currentReportEvent?.organizerUid || ''),
+          attendeeEmail: String(attEmail?.value || '').trim() || null,
+          reason: String(reasonSel?.value || ''),
+          details: String(details?.value || '').slice(0, 2000),
+          reporterUid: user.uid,
+          reporterEmail: user.email || '',
+          createdAt: serverTimestamp(),
+          status: 'new'
+        };
+        // Basic validation
+        if (payload.type === 'event' && !payload.eventId) { if (error){ error.textContent='Provide an event link or ID.'; error.style.display=''; } return; }
+        if (!payload.details) { if (error){ error.textContent='Please provide details.'; error.style.display=''; } return; }
+        // If manual event id was provided, try to enrich title/org
+        if (!currentReportEvent && payload.eventId) {
+          try {
+            const evSnap = await getDoc(doc(db, 'events', payload.eventId));
+            if (evSnap.exists()) {
+              const ev = evSnap.data();
+              payload.eventTitle = ev?.title || payload.eventTitle || '';
+              payload.organizerUid = ev?.organizerUid || payload.organizerUid || '';
+            }
+          } catch {}
+        }
+        await addDoc(collection(db, 'reports'), payload);
+        // Email DSG via Firestore Email extension
+        try {
+          const adminEmail = 'kureahoshi_2026@depauw.edu';
+          const subject = `[Event Atlas] New ${payload.type} report`;
+          const html = `<div style=\"font-family:system-ui,Segoe UI,Arial,sans-serif;\">\n            <h3 style=\"margin:0 0 6px;\">New ${payload.type} report</h3>\n            <p style=\"margin:0 0 6px;\"><b>Event:</b> ${payload.eventTitle || '(unknown)'}</p>\n            ${payload.organizerName ? `<p style=\\\"margin:0 0 6px;\\\"><b>Organizer:</b> ${payload.organizerName}</p>` : ''}\n            ${payload.attendeeEmail ? `<p style=\\\"margin:0 0 6px;\\\"><b>Attendee:</b> ${payload.attendeeEmail}</p>` : ''}\n            <p style=\"margin:0 0 6px;\"><b>Reason:</b> ${payload.reason}</p>\n            <pre style=\"white-space:pre-wrap;background:#f9fafb;border:1px solid #e5e7eb;padding:8px;border-radius:8px;\">${payload.details.replace(/</g,'&lt;')}</pre>\n            <p style=\"margin-top:8px;\">Reporter: ${payload.reporterEmail || payload.reporterUid}</p>\n          </div>`;
+          await addDoc(collection(db, 'mail'), {
+            to: [adminEmail],
+            message: { subject, text: `${payload.type} report for ${payload.eventTitle||payload.eventId}\nReason: ${payload.reason}\n${payload.details}`, html, from: 'kureahoshi_2026@depauw.edu', replyTo: 'kureahoshi_2026@depauw.edu' }
+          });
+        } catch {}
+        if (success) { success.style.display=''; }
+        if (error) { error.style.display='none'; }
+        setTimeout(hide, 800);
+      } catch (e) {
+        if (error) { error.textContent = e?.message || 'Failed to submit report'; error.style.display=''; }
+      }
+    });
+  }
+} catch {}
+
 async function fetchEventsForScope() {
   try {
     const eventsCol = collection(db, 'events');
-    // Try to use server-side filter by category when possible; fall back to client-side filtering
-    const wantsCategory = currentCategory && currentCategory !== 'all';
+    // Multi-select category support
+    const selectedCats = Array.isArray(currentCategories) ? currentCategories.filter(c => c && c !== 'all') : [];
+    const wantsCategory = selectedCats.length > 0;
     if (isOrganizer) {
       if (currentScope === 'my' && currentUid) {
         // Server-side filter: created by me (reliable even if org name differs)
         try {
           let qref;
-          if (wantsCategory) {
-            // May require composite index; if it fails we catch below
-            qref = query(eventsCol, where('organizerUid', '==', currentUid), where('category','==', currentCategory), orderBy('startTime','asc'));
+          if (wantsCategory && selectedCats.length === 1) {
+            qref = query(eventsCol, where('organizerUid', '==', currentUid), where('category','==', selectedCats[0]), orderBy('startTime','asc'));
           } else {
             qref = query(eventsCol, where('organizerUid', '==', currentUid), orderBy('startTime', 'asc'));
           }
           const snap = await getDocs(qref);
-          // Return ALL my events; grouping into Upcoming/Past happens in renderer
-          return snap.docs.map(d => ({ __id: d.id, ...d.data() }));
+          let arr = snap.docs.map(d => ({ __id: d.id, ...d.data() }));
+          if (wantsCategory && selectedCats.length > 1) arr = arr.filter(e => selectedCats.includes(String(e.category||'')));
+          return arr;
         } catch (err) {
           // Fallback: fetch all and filter locally
           const snap = await getDocs(query(eventsCol, orderBy('startTime', 'asc')));
           // Return ALL my events (not just upcoming)
           let arr = snap.docs.map(d => ({ __id: d.id, ...d.data() })).filter(e => (e.organizerUid || '') === currentUid);
-          if (wantsCategory) arr = arr.filter(e => (String(e.category||'') === currentCategory));
+          if (wantsCategory) arr = arr.filter(e => selectedCats.includes(String(e.category||'')));
           return arr;
         }
       }
@@ -577,25 +793,30 @@ async function fetchEventsForScope() {
         const snap = await getDocs(query(eventsCol, orderBy('startTime', 'asc')));
         // Show both upcoming and past for other organizers
         let arr = snap.docs.map(d => ({ __id: d.id, ...d.data() })).filter(e => (e.organizerUid || '') !== currentUid);
-        if (wantsCategory) arr = arr.filter(e => (String(e.category||'') === currentCategory));
+        if (wantsCategory) arr = arr.filter(e => selectedCats.includes(String(e.category||'')));
         return arr;
       }
     }
     // Default: return all events (grouping done in renderer)
     try {
       let qref;
-      if (wantsCategory) {
-        // May require index; catch errors and fall back
-        qref = query(eventsCol, where('category','==', currentCategory), orderBy('startTime','asc'));
+      if (wantsCategory && selectedCats.length === 1) {
+        qref = query(eventsCol, where('category','==', selectedCats[0]), orderBy('startTime','asc'));
       } else {
         qref = query(eventsCol, orderBy('startTime', 'asc'));
       }
       const snap = await getDocs(qref);
-      return snap.docs.map(d => ({ __id: d.id, ...d.data() }));
-    } catch (e) {
-      const snap = await getDocs(query(eventsCol, orderBy('startTime', 'asc')));
       let arr = snap.docs.map(d => ({ __id: d.id, ...d.data() }));
-      if (wantsCategory) arr = arr.filter(e => (String(e.category||'') === currentCategory));
+      if (wantsCategory && selectedCats.length > 1) arr = arr.filter(e => selectedCats.includes(String(e.category||'')));
+      return arr;
+    } catch (e) {
+      // Broader fallback: fetch without orderBy in case of index/format issues,
+      // then sort and filter on the client.
+      const snap = await getDocs(eventsCol);
+      let arr = snap.docs.map(d => ({ __id: d.id, ...d.data() }));
+      // Sort by startTime ascending if present
+      try { arr.sort((a,b) => (toMs(a.startTime)||0) - (toMs(b.startTime)||0)); } catch {}
+      if (wantsCategory) arr = arr.filter(e => selectedCats.includes(String(e.category||'')));
       return arr;
     }
   } catch (e) {
@@ -623,7 +844,6 @@ function buildCategoryChips() {
   if (!categoryChipsEl || categoryChipsEl._built) return;
   categoryChipsEl._built = true;
   const CATS = [
-    { key: 'all', label: 'All' },
     { key: 'Academic', label: 'Academic', color: CATEGORY_COLORS.Academic },
     { key: 'Arts', label: 'Arts', color: CATEGORY_COLORS.Arts },
     { key: 'Athletics', label: 'Athletics', color: CATEGORY_COLORS.Athletics },
@@ -633,64 +853,177 @@ function buildCategoryChips() {
   CATS.forEach(c => {
     const chip = document.createElement('button');
     chip.type = 'button';
-    chip.className = 'chip' + (c.key === 'all' ? ' active' : '');
+    chip.className = 'chip';
     chip.dataset.key = c.key;
-    chip.innerHTML = c.key === 'all' ? 'All' : `<span class="dot" style="background:${c.color || '#9ca3af'}"></span>${c.label}`;
+    chip.textContent = c.label; // remove colored dots
     chip.addEventListener('click', async () => {
-      currentCategory = c.key;
-      // update active state
+      currentCategories = [c.key];
       const children = categoryChipsEl.querySelectorAll('.chip');
-      children.forEach(el => el.classList.toggle('active', el.dataset.key === currentCategory));
-      // Reload events (try server-side filtered query)
+      children.forEach(el => el.classList.toggle('active', el.dataset.key === c.key));
       await loadEvents();
+      updateFilterSummary();
     });
     categoryChipsEl.appendChild(chip);
   });
 }
 
+function buildCategoriesSheet(){
+  // With accordion we render checkbox list into #category-list instead
+  if (!categoryListEl || categoryListEl._built) return;
+  categoryListEl._built = true;
+  const CATS = [
+    { key: 'Academic', label: 'Academic' },
+    { key: 'Arts', label: 'Arts' },
+    { key: 'Athletics', label: 'Athletics' },
+    { key: 'Community', label: 'Community' },
+    { key: 'Social', label: 'Social' },
+  ];
+  const render = () => {
+    categoryListEl.innerHTML = '';
+    CATS.forEach(c => {
+      const row = document.createElement('div');
+      row.className = 'check-item';
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = `cat-${c.key}`; cb.value = c.key;
+      const lbl = document.createElement('label'); lbl.setAttribute('for', `cat-${c.key}`); lbl.textContent = c.label;
+      // If none selected, treat as All (UI shows none checked)
+      cb.checked = currentCategories.includes(c.key);
+      cb.addEventListener('change', () => {
+        const set = new Set(currentCategories);
+        if (cb.checked) set.add(c.key); else set.delete(c.key);
+        currentCategories = Array.from(set);
+        loadEvents(); updateFilterSummary();
+      });
+      row.appendChild(cb); row.appendChild(lbl); categoryListEl.appendChild(row);
+    });
+  };
+  render();
+}
+
 function attachFilterHandlers() {
-  buildCategoryChips();
+  try { buildCategoryChips(); } catch {}
+  try { buildCategoriesSheet(); } catch {}
   // Search input
   if (searchInput && !searchInput._bound) {
     searchInput._bound = true;
-    const onQ = debounce(() => { currentQuery = searchInput.value || ''; renderListAndMarkers(); }, 250);
+    // Update pending value while typing; do not filter yet
+    const onQ = debounce(() => { pendingQuery = searchInput.value || ''; }, 100);
     searchInput.addEventListener('input', onQ);
+    // Pressing Enter applies both fields
+    searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); applySearchFilters(); } });
   }
   // Location filter
   if (locationInput && !locationInput._bound) {
     locationInput._bound = true;
-    const onL = debounce(() => { currentLocation = locationInput.value || ''; renderListAndMarkers(); }, 250);
+    const onL = debounce(() => { pendingLocation = locationInput.value || ''; updateFilterSummary(); }, 100);
     locationInput.addEventListener('input', onL);
+    // Pressing Enter in the location field applies the filter immediately
+    locationInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); applySearchFilters(); } });
   }
   if (clearLocationBtn && !clearLocationBtn._bound) {
     clearLocationBtn._bound = true;
-    clearLocationBtn.addEventListener('click', () => { if (locationInput) locationInput.value = ''; currentLocation=''; renderListAndMarkers(); });
+    clearLocationBtn.addEventListener('click', () => { if (locationInput) locationInput.value = ''; pendingLocation=''; /* wait for submit */ });
   }
+  // Rounded search icon button on the right
+  if (searchSubmitBtn && !searchSubmitBtn._bound) {
+    searchSubmitBtn._bound = true;
+    searchSubmitBtn.addEventListener('click', () => applySearchFilters());
+  }
+  // Accordion toggle
+  const filterAccordion = document.getElementById('filter-accordion');
+  if (filterAccordion && !filterAccordion._bound) {
+    filterAccordion._bound = true;
+    filterAccordion.addEventListener('click', (e) => {
+      const btn = e.target.closest('.acc-header');
+      if (!btn) return;
+      const item = btn.closest('.acc-item');
+      if (!item) return;
+      item.classList.toggle('open');
+    });
+  }
+  if (finalFilterBtn && !finalFilterBtn._bound) {
+    finalFilterBtn._bound = true;
+    finalFilterBtn.addEventListener('click', async () => {
+      try {
+        // If date panel is open, commit its temporary range
+        if (filterModal && filterModal.style.display !== 'none') {
+          if (!isNaN(tempStartMs) || !isNaN(tempEndMs)) {
+            timeStartMs = tempStartMs; timeEndMs = tempEndMs;
+            try { setTimeBtnLabel(isNaN(timeStartMs)?null:new Date(timeStartMs), isNaN(timeEndMs)?null:new Date(timeEndMs)); } catch {}
+          }
+          filterModal.style.display = 'none'; filterModal.setAttribute('aria-hidden','true');
+        }
+      } catch {}
+      try {
+        // If categories panel is open, commit selection
+        if (categoriesModal && categoriesModal.style.display !== 'none') {
+          currentCategory = pendingCategory || 'all';
+          categoriesModal.style.display = 'none'; categoriesModal.setAttribute('aria-hidden','true');
+        }
+      } catch {}
+      // Apply keyword + location and refresh list (re-fetch in case category scope changed)
+      applySearchFilters();
+      try { await loadEvents(); } catch {}
+    });
+  }
+  if (clearCatsBtn && !clearCatsBtn._bound) {
+    clearCatsBtn._bound = true;
+    clearCatsBtn.addEventListener('click', () => {
+      try {
+        currentCategories = [];
+        const list = document.getElementById('category-list');
+        if (list) list.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+        loadEvents();
+        updateFilterSummary();
+      } catch {}
+    });
+  }
+  // Categories sheet handlers
+  function openCats(){ if (!categoriesModal) return; pendingCategory = currentCategory || 'all'; buildCategoriesSheet(); categoriesModal.style.display = 'block'; categoriesModal.setAttribute('aria-hidden','false'); }
+  function closeCats(){ if (!categoriesModal) return; categoriesModal.style.display = 'none'; categoriesModal.setAttribute('aria-hidden','true'); }
+  if (openCatsBtn && !openCatsBtn._bound) { openCatsBtn._bound = true; openCatsBtn.addEventListener('click', openCats); }
+  if (categoriesBackdrop && !categoriesBackdrop._bound) { categoriesBackdrop._bound = true; categoriesBackdrop.addEventListener('click', closeCats); }
+  if (closeCatsBtn && !closeCatsBtn._bound) { closeCatsBtn._bound = true; closeCatsBtn.addEventListener('click', closeCats); }
+  if (cancelCatsBtn && !cancelCatsBtn._bound) { cancelCatsBtn._bound = true; cancelCatsBtn.addEventListener('click', closeCats); }
+  if (applyCatsBtn && !applyCatsBtn._bound) { applyCatsBtn._bound = true; applyCatsBtn.addEventListener('click', async () => { currentCategory = pendingCategory || 'all'; await loadEvents(); closeCats(); }); }
+  // Location sheet handlers (new UI)
+  function openLocation(){ if (!locationModal) return; seedLocationSuggestions(); locationModal.style.display='block'; locationModal.setAttribute('aria-hidden','false'); try { locationModalInput && locationModalInput.focus(); } catch {} }
+  function closeLocation(){ if (!locationModal) return; locationModal.style.display='none'; locationModal.setAttribute('aria-hidden','true'); }
+  if (openLocationBtn && !openLocationBtn._bound) { openLocationBtn._bound = true; openLocationBtn.addEventListener('click', openLocation); }
+  if (locationBackdrop && !locationBackdrop._bound) { locationBackdrop._bound = true; locationBackdrop.addEventListener('click', closeLocation); }
+  if (closeLocationBtn && !closeLocationBtn._bound) { closeLocationBtn._bound = true; closeLocationBtn.addEventListener('click', closeLocation); }
+  if (cancelLocationBtn && !cancelLocationBtn._bound) { cancelLocationBtn._bound = true; cancelLocationBtn.addEventListener('click', closeLocation); }
+  if (applyLocationBtn && !applyLocationBtn._bound) { applyLocationBtn._bound = true; applyLocationBtn.addEventListener('click', () => { pendingLocation = (locationModalInput?.value || ''); applySearchFilters(); closeLocation(); }); }
+  if (locationModalInput && !locationModalInput._bound) { locationModalInput._bound = true; locationModalInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); pendingLocation = locationModalInput.value || ''; applySearchFilters(); closeLocation(); } }); }
   // Time range via Flatpickr
   if (timeRangeInput && inlineCalendar && !timeRangeInput._fpInit) {
-    timeRangeInput._fpInit = true;
-    try {
-      fpRange = flatpickr(timeRangeInput, {
-        mode: 'range',
-        dateFormat: 'Y-m-d',
-        inline: true,
-        appendTo: inlineCalendar,
-        onClose: (selectedDates) => {
-          if (selectedDates && selectedDates.length) {
-            const [start, endRaw] = selectedDates;
-            const end = endRaw || start;
-            const s = new Date(start.getFullYear(), start.getMonth(), start.getDate(), 0,0,0,0);
-            const e = new Date(end.getFullYear(), end.getMonth(), end.getDate(), 23,59,59,999);
-            timeStartMs = s.getTime();
-            timeEndMs = e.getTime();
-            setTimeBtnLabel(s, e);
-          } else {
-            timeStartMs = NaN; timeEndMs = NaN; setTimeBtnLabel();
-          }
-          renderListAndMarkers();
+    const initInline = () => {
+      try {
+        fpRange = flatpickr(timeRangeInput, {
+          mode: 'range',
+          dateFormat: 'Y-m-d',
+          inline: true,
+          appendTo: inlineCalendar,
+          defaultDate: [],
+          onClose: (selectedDates) => {
+            if (selectedDates && selectedDates.length) {
+              const [start, endRaw] = selectedDates;
+              const end = endRaw || start;
+              const s = new Date(start.getFullYear(), start.getMonth(), start.getDate(), 0,0,0,0);
+              const e = new Date(end.getFullYear(), end.getMonth(), end.getDate(), 23,59,59,999);
+              timeStartMs = s.getTime();
+              timeEndMs = e.getTime();
+              setTimeBtnLabel(s, e);
+            } else {
+              timeStartMs = NaN; timeEndMs = NaN; setTimeBtnLabel();
+            }
+          renderListAndMarkers(); updateFilterSummary();
         }
       });
-    } catch {}
+        try { inlineCalendar.style.minHeight = '360px'; fpRange.redraw && fpRange.redraw(); } catch {}
+        if (fpRange) timeRangeInput._fpInit = true;
+      } catch {}
+    };
+    initInline();
     // Fallback UI if Flatpickr failed to load
     if (!fpRange) {
       try {
@@ -722,9 +1055,20 @@ function attachFilterHandlers() {
     } catch {}
     // Initialize calendar toolbar buttons
     try { bindCalToolbar(); } catch {}
+    // Retry initialising flatpickr multiple times in case assets load late
+    if (!timeRangeInput._fpInit) {
+      let tries = 0; const max = 10;
+      const retry = () => {
+        if (timeRangeInput._fpInit) return;
+        if (typeof flatpickr === 'function') initInline();
+        tries++;
+        if (!timeRangeInput._fpInit && tries < max) setTimeout(retry, 300);
+      };
+      setTimeout(retry, 300);
+    }
   }
   }
-  // Hide the button because calendar is inline
+  // Hide the legacy button because calendar is inline
   if (timeFilterBtn) timeFilterBtn.style.display = 'none';
   if (clearDatesBtn && !clearDatesBtn._bound) {
     clearDatesBtn._bound = true;
@@ -780,20 +1124,97 @@ function attachFilterHandlers() {
       closePanel();
     });
   }
-  // Preset ranges inside panel
+  // Preset ranges (works for inline calendar in accordion and modal panel)
   function setPreset(days){
     const now = new Date();
     const S = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0);
     let E = new Date(S);
     if (days === 'today') { E = new Date(S); }
     else { E = new Date(S.getTime() + (Number(days)||0) * 24*60*60*1000 - 1); }
-    tempStartMs = S.getTime(); tempEndMs = E.getTime();
-    try { fpPanel && fpPanel.setDate([new Date(tempStartMs), new Date(tempEndMs)], true); } catch {}
+    // Apply to live filter state
+    timeStartMs = S.getTime();
+    timeEndMs = E.getTime();
+    setTimeBtnLabel(S, E);
+    // Reflect on calendars if available
+    try { fpRange && fpRange.setDate([S, E], true); } catch {}
+    try { fpPanel && fpPanel.setDate([S, E], true); } catch {}
+    renderListAndMarkers();
+    // Anchor simple calendar view to the preset's start month (prevents odd jumps)
+    try {
+      if (inlineCalendar && inlineCalendar._simple && typeof buildSimpleCalendar === 'function') {
+        buildSimpleCalendar._month = { y: S.getFullYear(), m: S.getMonth() };
+        buildSimpleCalendar(true);
+      }
+    } catch {}
+    // Toggle active state on preset buttons
+    try {
+      const btns = document.querySelectorAll('.when-opt');
+      btns.forEach(b => b.classList.toggle('active', String(b.dataset.range) === String(days)));
+    } catch {}
   }
   const presetBtns = document.querySelectorAll('.when-opt');
   presetBtns.forEach(btn => {
     if (!btn._bound) { btn._bound = true; btn.addEventListener('click', () => { setPreset(btn.dataset.range); }); }
   });
+}
+
+// Simple inline calendar (month view) that keeps perfect 7-column alignment
+function buildSimpleCalendar(onlyRefresh){
+  const host = inlineCalendar; if (!host) return;
+  const today = new Date();
+  if (!buildSimpleCalendar._month || onlyRefresh !== true) {
+    // Initialize month to today if not set
+    buildSimpleCalendar._month = buildSimpleCalendar._month || { y: today.getFullYear(), m: today.getMonth() };
+  }
+  const state = buildSimpleCalendar._month;
+  const first = new Date(state.y, state.m, 1);
+  const startDow = first.getDay(); // 0..6
+  const daysInMonth = new Date(state.y, state.m+1, 0).getDate();
+  const prevMonthDays = new Date(state.y, state.m, 0).getDate();
+
+  const el = document.createElement('div'); el.className='simple-cal';
+  const header = document.createElement('div'); header.className='simple-cal-header';
+  const prev = document.createElement('button'); prev.className='simple-cal-nav'; prev.textContent='\u276E';
+  const next = document.createElement('button'); next.className='simple-cal-nav'; next.textContent='\u276F';
+  const title = document.createElement('div'); title.className='simple-cal-title';
+  title.textContent = new Date(state.y, state.m, 1).toLocaleString(undefined,{month:'long', year:'numeric'});
+  header.appendChild(prev); header.appendChild(title); header.appendChild(next);
+  const wk = document.createElement('div'); wk.className='simple-cal-weekdays';
+  ;['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(d=>{ const s=document.createElement('div'); s.textContent=d; wk.appendChild(s); });
+  const grid = document.createElement('div'); grid.className='simple-cal-grid';
+  // Leading previous-month days
+  for (let i=0;i<startDow;i++){
+    const d = document.createElement('div'); d.className='simple-cal-day muted'; d.textContent = String(prevMonthDays-startDow+i+1);
+    grid.appendChild(d);
+  }
+  // Current month
+  for (let d=1; d<=daysInMonth; d++){
+    const cell = document.createElement('div'); cell.className='simple-cal-day'; cell.textContent=String(d);
+    const date = new Date(state.y, state.m, d);
+    const msStart = new Date(state.y, state.m, d,0,0,0,0).getTime();
+    const msEnd = new Date(state.y, state.m, d,23,59,59,999).getTime();
+    if (!isNaN(timeStartMs) && isNaN(timeEndMs) && timeStartMs===msStart) cell.classList.add('selected');
+    if (!isNaN(timeStartMs) && !isNaN(timeEndMs) && msStart>=timeStartMs && msEnd<=timeEndMs) cell.classList.add('range');
+    cell.addEventListener('click', ()=>{
+      if (isNaN(timeStartMs) || (!isNaN(timeStartMs) && !isNaN(timeEndMs))){
+        timeStartMs = msStart; timeEndMs = NaN;
+      } else {
+        if (msEnd < timeStartMs){ timeEndMs = timeStartMs; timeStartMs = msStart; }
+        else { timeEndMs = msEnd; }
+      }
+      setTimeBtnLabel(isNaN(timeStartMs)?null:new Date(timeStartMs), isNaN(timeEndMs)?null:new Date(timeEndMs));
+      renderListAndMarkers(); updateFilterSummary(); buildSimpleCalendar(true);
+    });
+    grid.appendChild(cell);
+  }
+  // Trailing next-month days to complete grid
+  let filled = startDow + daysInMonth; const trailing = (7 - (filled % 7)) % 7;
+  for (let i=1;i<=trailing;i++){ const d=document.createElement('div'); d.className='simple-cal-day muted'; d.textContent=String(i); grid.appendChild(d); }
+
+  el.appendChild(header); el.appendChild(wk); el.appendChild(grid);
+  host.innerHTML=''; host.appendChild(el);
+  prev.onclick = ()=>{ if (state.m===0){ state.m=11; state.y--; } else state.m--; buildSimpleCalendar(true); };
+  next.onclick = ()=>{ if (state.m===11){ state.m=0; state.y++; } else state.m++; buildSimpleCalendar(true); };
 }
 
 function setTimeBtnLabel(start, end){
@@ -805,14 +1226,44 @@ function setTimeBtnLabel(start, end){
 
 function updateLocationOptions(){
   const dl = document.getElementById('location-suggestions');
-  if (!dl) return;
   const set = new Set();
   allEvents.forEach(e => { const n = String(e.locationName || '').trim(); if (n) set.add(n); });
   const values = Array.from(set).sort();
-  dl.innerHTML = '';
-  values.forEach(v => {
-    const opt = document.createElement('option');
-    opt.value = v; dl.appendChild(opt);
+  if (dl) {
+    dl.innerHTML = '';
+    values.forEach(v => { const opt = document.createElement('option'); opt.value = v; dl.appendChild(opt); });
+  }
+  // Also render suggested chips under the input
+  try {
+    if (suggestedLocationsEl) {
+      suggestedLocationsEl.innerHTML = '';
+      values.slice(0, 10).forEach(v => {
+        const chip = document.createElement('button');
+        chip.type = 'button'; chip.className = 'chip'; chip.textContent = v;
+        chip.addEventListener('click', () => {
+          try { if (locationInput) locationInput.value = v; } catch {}
+          pendingLocation = v; updateFilterSummary();
+        });
+        suggestedLocationsEl.appendChild(chip);
+      });
+    }
+  } catch {}
+}
+
+// Populate clickable suggestions inside the Location sheet
+function seedLocationSuggestions(){
+  if (!locationSuggestionsList) return;
+  const set = new Set();
+  allEvents.forEach(e => { const n = String(e.locationName || '').trim(); if (n) set.add(n); });
+  const values = Array.from(set).sort();
+  locationSuggestionsList.innerHTML = '';
+  values.slice(0, 50).forEach(v => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip';
+    chip.textContent = v;
+    chip.addEventListener('click', () => { if (locationModalInput) locationModalInput.value = v; pendingLocation = v; });
+    locationSuggestionsList.appendChild(chip);
   });
 }
 
@@ -855,15 +1306,15 @@ function shiftRange(dir){ // dir=-1 prev, +1 next
 
 function bindCalToolbar(){
   const el = (id) => document.getElementById(id);
-  const today = el('cal-today'), day = el('cal-day'), week = el('cal-week'), month = el('cal-month'), all = el('cal-all');
+  const today = el('cal-today'), day = el('cal-day'), week = el('cal-week'), month = el('cal-month'), allBtn = el('cal-all');
   const prev = el('cal-prev'), next = el('cal-next'), jump = el('jump-day-input');
-  const pills = [today, day, week, month, all];
+  const pills = [today, day, week, month, allBtn].filter(Boolean);
   const setActive = (btn) => pills.forEach(b => b && b.classList.toggle('active', b===btn));
   if (today && !today._bound) { today._bound = true; today.addEventListener('click', ()=> { setActive(today); applyRange('day', new Date()); }); }
   if (day && !day._bound) { day._bound = true; day.addEventListener('click', ()=> { setActive(day); applyRange('day'); }); }
   if (week && !week._bound) { week._bound = true; week.addEventListener('click', ()=> { setActive(week); applyRange('week'); }); }
   if (month && !month._bound) { month._bound = true; month.addEventListener('click', ()=> { setActive(month); applyRange('month'); }); }
-  if (all && !all._bound) { all._bound = true; all.addEventListener('click', ()=> { setActive(all); applyRange('all'); }); }
+  if (allBtn && !allBtn._bound) { allBtn._bound = true; allBtn.addEventListener('click', ()=> { setActive(allBtn); applyRange('all'); }); }
   if (prev && !prev._bound) { prev._bound = true; prev.addEventListener('click', ()=> shiftRange(-1)); }
   if (next && !next._bound) { next._bound = true; next.addEventListener('click', ()=> shiftRange(1)); }
   if (jump && !jump._bound) { jump._bound = true; jump.addEventListener('change', ()=> { if (!jump.value) return; setActive(day); applyRange('day', new Date(jump.value)); }); }
@@ -893,6 +1344,7 @@ async function showNotifications() {
   if (savedView) savedView.style.display = 'none';
   if (notificationsView) notificationsView.style.display = '';
   if (attendeeView) attendeeView.classList.add('profile-open');
+  try { await loadNotificationsFeed(); } catch {}
   try { await loadSubscriptions(); } catch {}
 }
 
@@ -974,6 +1426,17 @@ onAuthStateChanged(auth, (user) => {
         if (railSavedBtn && !railSavedBtn._bound) { railSavedBtn._bound = true; railSavedBtn.onclick = () => { showSaved(); }; }
         // Show saved button only for students
         if (railSavedBtn) railSavedBtn.style.display = isOrganizer ? 'none' : 'flex';
+        // Report button visible for both students and organizers
+        if (railReportBtn && !railReportBtn._bound) { railReportBtn._bound = true; railReportBtn.onclick = () => openReportModal(null); }
+        if (railReportBtn) railReportBtn.style.display = 'flex';
+        // Admin console button: only for DSG admin account
+        try {
+          if (railAdminBtn) {
+            const isAdminEmail = String(user.email || '').toLowerCase() === 'kureahoshi_2026@depauw.edu';
+            railAdminBtn.style.display = isAdminEmail ? 'flex' : 'none';
+            if (isAdminEmail && !railAdminBtn._nav) { railAdminBtn._nav = true; railAdminBtn.onclick = () => { const hosted = /\.web\.app$/.test(location.hostname) || /\.firebaseapp\.com$/.test(location.hostname); window.location.href = hosted ? '/admin' : 'admin.html'; }; }
+          }
+        } catch {}
         syncRoute();
         if (isOrganizer) { attachOrganizerTabs(); }
         else { setScope('all'); }
@@ -1001,13 +1464,50 @@ window.addEventListener('hashchange', () => {
   } catch {}
 });
 
+async function loadNotificationsFeed(){
+  const user = auth.currentUser; if (!user) return;
+  try {
+    if (notifFeed) notifFeed.innerHTML = '';
+    const coll = collection(db, 'userNotifications', user.uid, 'items');
+    const snap = await getDocs(query(coll, orderBy('createdAt', 'desc')));
+    if (notifFeed) notifFeed.innerHTML = '';
+    if (snap.empty) { if (notifFeed) notifFeed.innerHTML = '<div style="color:#6b7280;">No notifications yet.</div>'; return; }
+    snap.docs.forEach(d => {
+      const n = d.data(); n.__id = d.id;
+      const row = document.createElement('div'); row.className = 'notif' + (n.read ? '' : ' unread');
+      const left = document.createElement('div');
+      const title = document.createElement('div'); title.className='title'; title.textContent = n.title || 'Event update';
+      const body = document.createElement('div'); body.className='body'; body.textContent = n.body || '';
+      const meta = document.createElement('div'); meta.className='meta';
+      try { meta.textContent = n.createdAt ? new Date(n.createdAt).toLocaleString() : ''; } catch {}
+      left.appendChild(title); left.appendChild(body); left.appendChild(meta);
+      row.appendChild(left);
+      const right = document.createElement('div');
+      const btn = document.createElement('button'); btn.className='ui button tiny'; btn.textContent='Open';
+      btn.addEventListener('click', ()=> { if (n.eventId) openEventDetailById(n.eventId); });
+      right.appendChild(btn); row.appendChild(right);
+      notifFeed && notifFeed.appendChild(row);
+    });
+    if (notifMarkAll && !notifMarkAll._bound) {
+      notifMarkAll._bound = true;
+      notifMarkAll.addEventListener('click', async () => {
+        try {
+          const snap2 = await getDocs(query(coll));
+          await Promise.all(snap2.docs.map(docSnap => setDoc(docSnap.ref, { read: true }, { merge: true })));
+          loadNotificationsFeed();
+        } catch {}
+      });
+    }
+  } catch (e) { console.log('loadNotificationsFeed failed', e); }
+}
+
 async function loadSavedEvents(){
   const user = auth.currentUser; if (!user) return;
   try {
     const dbi = db; // already getFirestore()
     const subs = await getDocs(collection(dbi, 'userSubscriptions', user.uid, 'events'));
     const ids = subs.docs.map(d => d.id);
-    if (savedList) savedList.innerHTML = '<div style="color:#6b7280;">Loading…</div>';
+    if (savedList) savedList.innerHTML = '';
     if (!ids.length) { if (savedList) savedList.innerHTML = '<div style="color:#6b7280;">No saved events yet.</div>'; return; }
 
     // Fetch events concurrently in batches using documentId() in queries (chunks of 10)
@@ -1035,8 +1535,18 @@ async function loadSavedEvents(){
       const t = document.createElement('div'); t.className = 'event-card-title'; t.textContent = e.title || 'Untitled';
       const m = document.createElement('div'); m.className = 'event-card-meta'; m.textContent = `${formatWhen(e.startTime, e.endTime)}  •  ${e.locationName || ''}`;
       body.appendChild(t); body.appendChild(m); card.appendChild(body);
-      const btn = document.createElement('button'); btn.className='ui button tiny'; btn.textContent='Open'; btn.addEventListener('click', ()=> openEventDetailById(e.__id));
-      const actions = document.createElement('div'); actions.style.marginLeft='auto'; actions.appendChild(btn); card.appendChild(actions);
+      const openBtn = document.createElement('button'); openBtn.className='ui button tiny'; openBtn.textContent='Open'; openBtn.addEventListener('click', ()=> openEventDetailById(e.__id));
+      const unsaveBtn = document.createElement('button'); unsaveBtn.className='ui button tiny btn-unsave'; unsaveBtn.textContent='Unsave';
+      unsaveBtn.style.marginLeft = '8px';
+      unsaveBtn.addEventListener('click', async () => {
+        try {
+          const ok = await openConfirm('Are you sure you want to unsave the event?', 'Unsave', 'Cancel');
+          if (!ok) return;
+          await unsubscribeFromEvent(e.__id);
+          loadSavedEvents();
+        } catch {}
+      });
+      const actions = document.createElement('div'); actions.style.marginLeft='auto'; actions.appendChild(openBtn); actions.appendChild(unsaveBtn); card.appendChild(actions);
       return card;
     };
     // Upcoming
@@ -1058,6 +1568,28 @@ async function loadSavedEvents(){
   } catch (e) { console.log('loadSavedEvents failed', e); }
 }
 
+// Simple reusable confirm modal that returns a Promise<boolean>
+function openConfirm(message, okLabel='OK', cancelLabel='Cancel'){
+  return new Promise((resolve) => {
+    try {
+      const modal = document.getElementById('confirm-modal');
+      const title = document.getElementById('confirm-title');
+      const ok = document.getElementById('confirm-ok');
+      const cancel = document.getElementById('confirm-cancel');
+      const backdrop = document.getElementById('confirm-backdrop');
+      if (!modal || !ok || !cancel || !title) { resolve(window.confirm(message)); return; }
+      title.textContent = message || 'Are you sure?';
+      ok.textContent = okLabel || 'OK';
+      cancel.textContent = cancelLabel || 'Cancel';
+      modal.style.display = 'block'; modal.setAttribute('aria-hidden','false');
+      const cleanup = (val) => { modal.style.display='none'; modal.setAttribute('aria-hidden','true'); ok.onclick = null; cancel.onclick = null; if (backdrop) backdrop.onclick = null; resolve(val); };
+      ok.onclick = () => cleanup(true);
+      cancel.onclick = () => cleanup(false);
+      if (backdrop) backdrop.onclick = () => cleanup(false);
+    } catch { resolve(false); }
+  });
+}
+
 // Ensure filters are wired even if auth boot is delayed
 try {
   if (document.readyState === 'loading') {
@@ -1077,31 +1609,5 @@ async function loadSubscriptions(){
       });
     }
   } catch {}
-  // list
-  try {
-    const { getFirestore, collection, getDocs, doc, getDoc } = await import('https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js');
-    const dbi = getFirestore();
-    const coll = collection(dbi, 'userSubscriptions', user.uid, 'events');
-    const snap = await getDocs(coll);
-    const ids = snap.docs.map(d => d.id);
-    if (subscribedList) subscribedList.innerHTML = '';
-    for (const id of ids) {
-      try {
-        const evDoc = await getDoc(doc(dbi, 'events', id));
-        if (!evDoc.exists()) continue;
-        const ev = { __id: id, ...evDoc.data() };
-        const card = document.createElement('div'); card.className = 'event-card'; card.dataset.id = id;
-        const body = document.createElement('div'); body.className = 'event-card-body';
-        const title = document.createElement('div'); title.className = 'event-card-title'; title.textContent = ev.title || 'Untitled';
-        const meta = document.createElement('div'); meta.className = 'event-card-meta'; meta.textContent = `${formatWhen(ev.startTime, ev.endTime)}  •  ${ev.locationName || ''}`;
-        body.appendChild(title); body.appendChild(meta); card.appendChild(body);
-        const actions = document.createElement('div'); actions.style.marginLeft='auto';
-        const btn = document.createElement('button'); btn.className='ui button tiny'; btn.textContent='Unsubscribe';
-        btn.addEventListener('click', async () => { try { await unsubscribeFromEvent(id); loadSubscriptions(); } catch {} });
-        actions.appendChild(btn); card.appendChild(actions);
-        if (subscribedList) subscribedList.appendChild(card);
-      } catch {}
-    }
-    if (ids.length === 0 && subscribedList) { subscribedList.innerHTML = '<div style="color:#6b7280;">No subscriptions yet.</div>'; }
-  } catch (e) { console.log('loadSubscriptions failed', e); }
+  // list removed from Notifications UI per request; keep permission management only
 }

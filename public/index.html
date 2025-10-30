@@ -47,52 +47,85 @@
                     <!-- Explore tab -->
                     <div id="explore-view">
                         <div class="attendee-search">
-                            <div class="search-title">Search Events</div>
+                            <div class="search-title">DePauw Events</div>
                             <div class="split-search" id="split-search">
                                 <div class="split-left">
                                     <i class="search icon" aria-hidden="true"></i>
                                     <input id="event-search" type="text" placeholder="Search events..." aria-label="Search events by title, org, description" />
                                 </div>
-                                <div class="split-divider" aria-hidden="true"></div>
-                                <div class="split-right">
-                                    <input id="location-input" type="text" placeholder="Location" aria-label="Filter by location" list="location-suggestions" />
-                                    <button id="clear-location" class="clear-btn" type="button" aria-label="Clear location">&times;</button>
-                                </div>
-                                <button id="search-submit" class="search-round" type="button" aria-label="Apply search"><i class="search icon"></i></button>
-                                <datalist id="location-suggestions"></datalist>
                             </div>
-                            <div class="filter-row">
-                                <!-- Inline calendar below replaces this button; kept for fallback -->
-                                <button id="time-filter-btn" class="pill-select" type="button" aria-label="Filter by time" style="display:none;">All Time</button>
-                                <input id="time-range" type="text" hidden aria-hidden="true" />
-                            </div>
-                            <!-- Calendar toolbar: presets and navigation -->
-                            <div class="cal-toolbar" id="cal-toolbar">
-                              <div class="cal-left">
-                                <button class="cal-pill" id="cal-today" type="button">Today</button>
-                                <button class="cal-pill" id="cal-day" type="button">Day</button>
-                                <button class="cal-pill" id="cal-week" type="button">Week</button>
-                                <button class="cal-pill" id="cal-month" type="button">Month</button>
-                                <button class="cal-pill" id="cal-all" type="button">All</button>
+                            <div class="filters-card">
+                              <div class="filters-header">
+                                <div class="filter-results-text">Filter results</div>
                               </div>
-                              <div class="cal-right">
-                                <input id="jump-day-input" class="jump-input" type="date" aria-label="Jump to day" />
-                                <button class="cal-nav" id="cal-prev" type="button" aria-label="Previous">&#x276E;</button>
-                                <button class="cal-nav" id="cal-next" type="button" aria-label="Next">&#x276F;</button>
+
+                              <!-- Accordion-style filter panels -->
+                              <div class="filter-accordion" id="filter-accordion">
+                                <!-- Location -->
+                                <div class="acc-item">
+                                    <button class="acc-header" type="button" data-acc="loc">
+                                        <span>location</span>
+                                        <i class="chevron down icon" aria-hidden="true"></i>
+                                    </button>
+                                    <div class="acc-panel" id="acc-loc">
+                                        <div class="loc-control">
+                                            <i class="map marker alternate icon" aria-hidden="true"></i>
+                                            <input id="location-input" type="text" placeholder="Search location" aria-label="Filter by location" />
+                                            <button id="clear-location" class="clear-btn" type="button" aria-label="Clear location">&times;</button>
+                                        </div>
+                                        <div class="suggested-wrap">
+                                            <div class="suggested-label">Suggested locations</div>
+                                            <div id="suggested-locations" class="suggested-list"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- Dates -->
+                                <div class="acc-item open">
+                                    <button class="acc-header" type="button" data-acc="dates">
+                                        <span>date</span>
+                                        <i class="chevron down icon" aria-hidden="true"></i>
+                                    </button>
+                                    <div class="acc-panel" id="acc-dates">
+                                        <div class="when-box">
+                                            <button class="when-opt" data-range="today" type="button">Today</button>
+                                            <button class="when-opt" data-range="7" type="button">Next 7 Days</button>
+                                            <button class="when-opt" data-range="30" type="button">Next 30 Days</button>
+                                            <div class="when-cal-header">Select Date
+                                                <button id="clear-dates-btn" class="link-clear" type="button" style="margin-left:auto;">Clear</button>
+                                            </div>
+                                            <div id="inline-calendar" class="filter-calendar"></div>
+                                        </div>
+                                        <!-- Input used by Flatpickr (kept off-screen but not hidden) -->
+                                        <input id="time-range" type="text" aria-hidden="true" style="position:absolute;left:-9999px;width:0;height:0;opacity:0;" />
+                                    </div>
+                                </div>
+                                <!-- Categories -->
+                                <div class="acc-item">
+                                    <button class="acc-header" type="button" data-acc="cats">
+                                        <span>category</span>
+                                        <i class="chevron down icon" aria-hidden="true"></i>
+                                    </button>
+                                    <div class="acc-panel" id="acc-cats">
+                                        <div id="category-list" class="check-list" aria-label="Filter by category"></div>
+                                        <div style="margin-top:6px;">
+                                            <button id="clear-categories" class="link-clear" type="button">Clear</button>
+                                        </div>
+                                    </div>
+                                </div>
+                              </div>
+                              <div class="filters-footer">
+                                  <div class="filters-count" id="filters-count">&nbsp;</div>
+                                  <div class="filters-actions">
+                                      <button id="clear-filters-btn" class="btn-clear" type="button">Clear all</button>
+                                      <button id="final-filter-btn" class="final-filter-btn" type="button" aria-label="Apply all filters">
+                                          <span>Apply filters</span>
+                                          <span id="filter-summary" class="filter-summary"></span>
+                                      </button>
+                                  </div>
                               </div>
                             </div>
-                            <div class="inline-calendar" id="inline-calendar">
-                                <div class="inline-calendar-header">
-                                    <div class="title">Select Dates</div>
-                                    <button id="clear-dates-btn" class="link-clear" type="button">Clear</button>
-                                </div>
-                                <!-- Flatpickr will render here -->
-                            </div>
-                            <div class="filter-actions">
-                                <button id="open-filter-btn" class="pill-select" type="button" aria-label="Open filters">Filter results</button>
-                            </div>
-                            <div class="filter-title">Event Categories</div>
-                            <div id="category-chips" class="chip-group" aria-label="Filter by category"></div>
+                            <div class="filter-actions"></div>
+                            <!-- Inline category chips removed: moved to sheet -->
                             <div class="attendee-count" id="event-count">0 events found</div>
                         </div>
                         <!-- Organizer-only tabs -->
@@ -122,8 +155,10 @@
                                 </div>
                             </div>
                             <div class="row-divider"></div>
-                            <div class="account-row"><div class="row-left"><i class="list icon"></i> Subscribed Events</div><div class="row-right"></div></div>
-                            <div id="subscribed-list" class="attendee-list"></div>
+                            <div class="account-row"><div class="row-left"><i class="inbox icon"></i> Notification Feed</div><div class="row-right"><button id="notif-mark-all" class="ui button tiny" type="button">Mark all read</button></div></div>
+                            <div id="notif-feed" class="attendee-list"></div>
+                            <div class="row-divider"></div>
+                            
                         </div>
                     </div>
 
@@ -193,6 +228,11 @@
                   </button>
                 </div>
                 <div class="nav-row">
+                  <button id="rail-report-btn" class="rail-btn" title="Report" aria-label="Report an issue">
+                      <i class="flag outline icon"></i>
+                  </button>
+                </div>
+                <div class="nav-row">
                   <button id="rail-notify-btn" class="rail-btn" title="Notifications" aria-label="Notifications">
                       <i class="bell outline icon"></i>
                   </button>
@@ -205,6 +245,11 @@
                 <div class="nav-row">
                   <button id="rail-drafts-btn" class="rail-btn" title="My Drafts" aria-label="My Drafts" style="display:none;">
                       <i class="save outline icon"></i>
+                  </button>
+                </div>
+                <div class="nav-row">
+                  <button id="rail-admin-btn" class="rail-btn" title="Admin Console" aria-label="Admin Console" style="display:none;">
+                      <i class="shield alternate icon"></i>
                   </button>
                 </div>
                 <div class="rail-spacer"></div>
@@ -251,7 +296,8 @@
           <div class="event-detail-meta" id="event-detail-meta"></div>
           <div class="event-actions">
             <button id="event-interest-btn" class="btn-interest" type="button"><i class="heart outline icon"></i> Save event</button>
-            <a id="event-addcal-btn" class="btn-addcal" href="#" download>Add to calendar <i class="calendar plus outline icon"></i></a>
+            
+            <button id="event-report-btn" class="btn-report" type="button"><i class="flag outline icon"></i> Report</button>
           </div>
 
           <div class="section-block">
@@ -293,6 +339,51 @@
       </div>
     </div>
 
+    <!-- Location Modal (right sheet) -->
+    <div id="location-modal" class="filter-modal" style="display:none;" aria-hidden="true" role="dialog" aria-label="Location filter">
+      <div class="filter-backdrop" id="location-backdrop"></div>
+      <div class="filter-sheet" role="document">
+        <div class="filter-header">
+          <div class="filter-title-strong">Location</div>
+          <button id="close-location-btn" class="filter-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="filter-body">
+          <div class="filter-rowline">
+            <label class="filter-label">Search location</label>
+            <input id="location-modal-input" type="text" placeholder="Search by building or place" />
+          </div>
+          <div class="filter-rowline">
+            <label class="filter-label">Suggestions</label>
+            <div id="location-suggestions-list" class="chip-group"></div>
+          </div>
+        </div>
+        <div class="filter-footer">
+          <button id="cancel-location-btn" class="btn-cancel" type="button">Cancel</button>
+          <button id="apply-location-btn" class="btn-apply" type="button">Apply</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Categories Modal (right sheet) -->
+    <div id="categories-modal" class="filter-modal" style="display:none;" aria-hidden="true" role="dialog" aria-label="Categories">
+      <div class="filter-backdrop" id="categories-backdrop"></div>
+      <div class="filter-sheet" role="document">
+        <div class="filter-header">
+          <div class="filter-title-strong">Categories</div>
+          <button id="close-cats-btn" class="filter-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="filter-body">
+          <div class="filter-rowline">
+            <div id="categories-chiplist" class="chip-group" aria-label="Choose a category"></div>
+          </div>
+        </div>
+        <div class="filter-footer">
+          <button id="cancel-cats-btn" class="btn-cancel" type="button">Cancel</button>
+          <button id="apply-cats-btn" class="btn-apply" type="button">Apply</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Filter Panel Modal -->
     <div id="filter-modal" class="filter-modal" aria-hidden="true" role="dialog" aria-label="Filter results" style="display:none;">
       <div class="filter-backdrop" id="filter-backdrop"></div>
@@ -302,13 +393,7 @@
           <button id="close-filter-btn" class="filter-close" aria-label="Close">&times;</button>
         </div>
         <div class="filter-body">
-          <div class="filter-rowline">
-            <label class="filter-label">Sort By</label>
-            <select id="sort-select" class="filter-select">
-              <option value="date">Date</option>
-              <option value="title">Title</option>
-            </select>
-          </div>
+          <!-- Removed Sort By select to simplify Select Dates UI -->
           <div class="filter-rowline">
             <label class="filter-label">When</label>
             <div class="when-box">
@@ -320,19 +405,76 @@
               <div id="filter-calendar" class="filter-calendar"></div>
             </div>
           </div>
-          <!-- Stubs for future facets to match the template -->
-          <div class="filter-rowline">
-            <label class="filter-label">Audience</label>
-            <select class="filter-select" disabled><option>All Audiences</option></select>
-          </div>
-          <div class="filter-rowline">
-            <label class="filter-label">Event Format</label>
-            <select class="filter-select" disabled><option>All Event Formats</option></select>
-          </div>
+          <!-- Removed Audience and Event Format facets per request -->
         </div>
         <div class="filter-footer">
           <button id="cancel-filter-btn" class="btn-cancel" type="button">Cancel</button>
           <button id="apply-filter-btn" class="btn-apply" type="button">Apply filters</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Report Modal -->
+    <div id="report-modal" class="simple-modal" style="display:none;" aria-hidden="true" role="dialog" aria-label="Report">
+      <div class="simple-modal-backdrop" id="report-backdrop"></div>
+      <div class="simple-modal-content" role="document">
+        <div class="simple-modal-header">
+          <div class="simple-modal-title">Submit a Report</div>
+          <button id="report-close" class="simple-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="simple-modal-body">
+          <div class="form-row">
+            <label>Type</label>
+            <select id="report-type">
+              <option value="event">Report Event</option>
+              <option value="attendee">Report Attendee</option>
+            </select>
+          </div>
+          <div class="form-row" id="report-event-row" style="display:none;">
+            <label>Event Title</label>
+            <input id="report-event-title" type="text" placeholder="Event title" />
+            <div style="color:#6b7280;font-size:12px;">If you clicked Report from an event, this may be prefilled.</div>
+          </div>
+          <div class="form-row" id="report-event-org-row" style="display:none;">
+            <label>Event Organizer</label>
+            <input id="report-event-org" type="text" placeholder="Organization or organizer name" />
+          </div>
+          <div class="form-row" id="report-attendee-row" style="display:none;">
+            <label>Attendee Email (optional)</label>
+            <input id="report-attendee-email" type="email" placeholder="student@depauw.edu" />
+          </div>
+          <div class="form-row">
+            <label>Reason</label>
+            <select id="report-reason">
+              <option value="misleading">Misleading info</option>
+              <option value="inappropriate">Inappropriate content</option>
+              <option value="safety">Safety concern</option>
+              <option value="no-show">RSVP no-show</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Details</label>
+            <textarea id="report-details" rows="5" placeholder="Describe what happened..."></textarea>
+          </div>
+          <div id="report-error" class="form-error" role="alert" style="display:none;"></div>
+          <div id="report-success" class="form-success" role="status" style="display:none;">Thanks. Your report was submitted.</div>
+        </div>
+        <div class="simple-modal-footer">
+          <button id="report-submit" class="ui button primary" type="button">Submit</button>
+          <button id="report-cancel" class="ui button" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Reusable Confirm Modal -->
+    <div id="confirm-modal" class="confirm-modal" style="display:none;" aria-hidden="true" role="dialog" aria-label="Confirm">
+      <div class="confirm-backdrop" id="confirm-backdrop"></div>
+      <div class="confirm-card" role="document">
+        <div class="confirm-title" id="confirm-title">Are you sure?</div>
+        <div class="confirm-actions">
+          <button id="confirm-cancel" class="ui button" type="button">Cancel</button>
+          <button id="confirm-ok" class="ui button primary" type="button">OK</button>
         </div>
       </div>
     </div>
