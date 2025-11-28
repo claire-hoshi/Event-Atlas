@@ -95,8 +95,7 @@ async function loadEvents(){
   } catch (e) { listEl.textContent='Failed to load events'; }
 }
 
-// Removed unused legacy tab binder
-
+// Removed unused
 onAuthStateChanged(auth, async (user) => {
   const ok = !!user && String(user.email || '').toLowerCase() === 'kureahoshi_2026@depauw.edu';
   document.getElementById('admin-warning').style.display = ok ? 'none' : '';
