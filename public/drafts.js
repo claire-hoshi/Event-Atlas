@@ -175,7 +175,11 @@ function renderEventRow(e){
 
   const colAct = document.createElement('div'); colAct.className='draft-actions';
   const isHosted = /(\.web\.app|\.firebaseapp\.com)$/.test(location.hostname);
-  const openBtn = document.createElement('a'); openBtn.className='ui button tiny'; openBtn.textContent='Open'; openBtn.href = (isHosted ? '/' : 'index.html');
+  const openBtn = document.createElement('a');
+  openBtn.className='ui button tiny';
+  openBtn.textContent='Open';
+  // Deep-link to event details modal on the map page
+  openBtn.href = (isHosted ? `/#event=${encodeURIComponent(e.__id)}` : `index.html#event=${encodeURIComponent(e.__id)}`);
   const editBtn = document.createElement('a'); editBtn.className='ui button tiny btn-edit'; editBtn.textContent='Edit';
   editBtn.href = (isHosted ? `/create-event?event=${encodeURIComponent(e.__id)}` : `create-event.html?event=${encodeURIComponent(e.__id)}`);
   colAct.appendChild(editBtn);

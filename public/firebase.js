@@ -10,7 +10,8 @@
     apiKey: "AIzaSyB3utZ1a7AgboBIpSwekCCjw7tnaANl4bc",
     authDomain: "sample-depauweventmap.firebaseapp.com",
     projectId: "sample-depauweventmap",
-    storageBucket: "sample-depauweventmap.firebasestorage.app",
+  // Use the bucket ID (ends with appspot.com)
+  storageBucket: "sample-depauweventmap.appspot.com",
     messagingSenderId: "787823402182",
     appId: "1:787823402182:web:f1d2c7f3b1ca2275488bc7",
     measurementId: "G-DNJ670YP59"

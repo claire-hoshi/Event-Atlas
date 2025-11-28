@@ -7,34 +7,72 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.4.1/semantic.min.css" />
   <link rel="stylesheet" href="style.css" />
 </head>
-<body class="create-event-page">
+<body class="admin-page with-rail">
   <!-- Simple left rail like the main app for quick navigation -->
   <div class="left-rail" id="left-rail" aria-label="Navigation" style="display:flex;">
     <div class="nav-row">
-      <button id="admin-rail-home-btn" class="rail-btn event-style" title="Home" aria-label="Home">
+      <button id="rail-home-btn" class="rail-btn event-style" title="Home" aria-label="Home">
         <i class="home icon"></i>
+      </button>
+    </div>
+    <div class="nav-row">
+      <button id="rail-saved-btn" class="rail-btn" title="Saved Events" aria-label="Saved Events">
+        <i class="bookmark outline icon"></i>
+      </button>
+    </div>
+    <div class="nav-row">
+      <button id="rail-report-btn" class="rail-btn" title="Report" aria-label="Report an issue">
+        <i class="flag outline icon"></i>
+      </button>
+    </div>
+    <div class="nav-row">
+      <button id="rail-create-btn" class="rail-btn event-style" title="Create Event" aria-label="Create Event">
+        <i class="plus icon"></i>
+      </button>
+    </div>
+    <div class="nav-row">
+      <button id="rail-drafts-btn" class="rail-btn" title="My Drafts" aria-label="My Drafts">
+        <i class="save outline icon"></i>
+      </button>
+    </div>
+    <div class="nav-row">
+      <button id="rail-admin-btn" class="rail-btn" title="Admin Console" aria-label="Admin Console">
+        <i class="shield alternate icon"></i>
+      </button>
+    </div>
+    <div class="rail-spacer"></div>
+    <div class="nav-row">
+      <button id="rail-profile-btn" class="rail-btn" title="Profile & Settings" aria-label="Open Profile">
+        <img id="rail-avatar" alt="avatar" />
+        <i class="user outline icon"></i>
       </button>
     </div>
   </div>
 
-  <section style="padding:16px; max-width: 1100px; margin: 0 auto;">
-    <h2 style="margin:0 0 12px;">DSG Admin Console</h2>
-    <div id="admin-warning" style="display:none;color:#b91c1c;">Access denied. Sign in as kureahoshi_2026@depauw.edu</div>
-    <div id="admin-app" style="display:none;">
-      <div class="ui top attached tabular menu">
-        <a class="item active" data-tab="reports">Reports</a>
-        <a class="item" data-tab="events">Events</a>
-      </div>
-      <div class="ui bottom attached segment active" data-tab="reports">
-        <div id="reports-list">Loading…</div>
-      </div>
-      <div class="ui bottom attached segment" data-tab="events">
-        <div id="events-list">Loading…</div>
+  <section>
+    <div class="ui segment" style="width:100%; max-width:960px; margin:0 auto;">
+      <div class="section-title">DSG Admin Console</div>
+      <div class="account-panel">
+        <div id="admin-warning" style="display:none;color:#b91c1c;">Access denied. Sign in as kureahoshi_2026@depauw.edu</div>
+        <div id="admin-app" style="display:none;">
+          <div class="ui bottom attached segment" data-tab="events">
+            <div class="drafts-tabs">
+              <div class="tabs-left">
+                <a class="tab active" id="admin-tab-upcoming" href="#">Upcoming events <span class="pill" id="admin-count-up">0</span></a>
+                <a class="tab" id="admin-tab-report" href="#">Report <span class="pill" id="admin-count-report">0</span></a>
+              </div>
+              <div class="tabs-spacer"></div>
+            </div>
+            <div id="admin-events-list" class="drafts-table">Loading…</div>
+            <div id="admin-report-list" class="drafts-table" style="display:none;">Loading…</div>
+          </div>
+        </div>
       </div>
     </div>
   </section>
 
   <script src="firebase.js" type="module"></script>
   <script src="admin.js" type="module"></script>
+  <script src="nav.js" type="module"></script>
 </body>
 </html>

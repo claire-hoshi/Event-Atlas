@@ -31,6 +31,7 @@ const storage = getStorage();
 
 const studentLoginBtn = document.getElementById('student-login-btn');
 const orgLoginBtn = document.getElementById('org-login-btn');
+const publicAccessBtn = document.getElementById('public-access-btn');
 const UIErrorMessage = document.getElementById('error-message');
 
 const signUpFormView = document.getElementById("signup-form");
@@ -191,6 +192,25 @@ if (orgLoginBtn) {
     });
 }
 
+// Public Access: view-only mode, no auth required
+if (publicAccessBtn) {
+    publicAccessBtn.addEventListener('click', () => {
+        try { clearTimeout(loaderFallback); } catch {}
+        try { window.PUBLIC_MODE = true; } catch { window.PUBLIC_MODE = true; }
+        // Flip UI to attendee layout in a simplified mode
+        try { document.body.classList.remove('with-rail'); } catch {}
+        try { document.body.classList.add('public-mode'); } catch {}
+        if (signUpFormView) signUpFormView.style.display = 'none';
+        if (attendeeView) attendeeView.style.display = 'grid';
+        // Ensure rail stays hidden in public mode
+        try { const rail = document.getElementById('left-rail'); if (rail) rail.style.display = 'none'; } catch {}
+        // Hide loading overlay
+        if (appLoading) appLoading.style.display = 'none';
+        // Let map.js know to bootstrap without auth
+        try { document.dispatchEvent(new CustomEvent('public-mode')); } catch { document.dispatchEvent(new Event('public-mode')); }
+    });
+}
+
 // Logout handler
 if (logoutBtn) {
     logoutBtn.addEventListener('click', async () => {
@@ -210,6 +230,9 @@ onAuthStateChanged(auth, async (user) => {
     try { clearTimeout(loaderFallback); } catch {}
     if (appLoading) appLoading.style.display = 'none';
     if (user && user.email && user.email.toLowerCase().endsWith("@depauw.edu")) {
+        // Ensure we exit public mode when a real user session is active
+        try { window.PUBLIC_MODE = false; } catch { /* noop */ }
+        try { document.body.classList.remove('public-mode'); } catch {}
         // Reserve space for the left rail when logged in
         try { document.body.classList.add('with-rail'); } catch {}
         // Ensure the left rail is visible after sign-in
@@ -247,9 +270,17 @@ onAuthStateChanged(auth, async (user) => {
         try { document.body.classList.remove('with-rail'); } catch {}
         // Hide the left rail on sign-out
         try { const rail = document.getElementById('left-rail'); if (rail) rail.style.display = 'none'; } catch {}
-        if (attendeeView) attendeeView.style.display = 'none';
-        if (userProfileView) userProfileView.style.display = "none";
-        if (signUpFormView) signUpFormView.style.display = "block";
+        // If public mode is active, keep showing the attendee view; otherwise show login
+        if (window.PUBLIC_MODE) {
+            try { document.body.classList.add('public-mode'); } catch {}
+            if (attendeeView) attendeeView.style.display = 'grid';
+            if (userProfileView) userProfileView.style.display = 'none';
+            if (signUpFormView) signUpFormView.style.display = 'none';
+        } else {
+            if (attendeeView) attendeeView.style.display = 'none';
+            if (userProfileView) userProfileView.style.display = "none";
+            if (signUpFormView) signUpFormView.style.display = "block";
+        }
         if (userNameText) userNameText.textContent = "";
         if (userEmailText) userEmailText.textContent = "";
         if (avatarImg) avatarImg.removeAttribute("src");
@@ -397,6 +428,9 @@ if (requestOrgBtn) {
         }
     });
 }
+
+// If a hero image path is provided in Storage, resolve it to a download URL
+// (Removed unused dynamic Storage image loader for non-existent hero/logo IDs)
 
 // Organizer can edit Organization Name via inline UI
 function showOrgNameEdit() {

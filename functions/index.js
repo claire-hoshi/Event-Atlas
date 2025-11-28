@@ -220,37 +220,7 @@ export const onEventUpdatedNotify = onDocumentUpdated('events/{eventId}', async 
 });
 
 // Organizer-only: return list of subscribers (emails) for an event
-export const getEventSubscribers = onCall({ cors: true }, async (request) => {
-  const caller = request.auth;
-  if (!caller) throw new HttpsError('unauthenticated', 'Must be signed in.');
-  const uid = caller.uid;
-  const eventId = String(request.data?.eventId || '');
-  if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
-
-  // Check organizer claim
-  const role = String(caller.token?.role || 'student').toLowerCase();
-  if (!['organizer','organization','org'].includes(role)) {
-    throw new HttpsError('permission-denied', 'Organizer role required.');
-  }
-
-  // Verify ownership of the event
-  const evSnap = await db.collection('events').doc(eventId).get();
-  if (!evSnap.exists) throw new HttpsError('not-found', 'Event not found');
-  const ev = evSnap.data();
-  if (String(ev?.organizerUid || '') !== String(uid)) {
-    throw new HttpsError('permission-denied', 'Only the event organizer can view subscribers.');
-  }
-
-  // Read subscriptions (server-side, not allowed directly by rules)
-  const subsSnap = await db.collection('eventSubscriptions').doc(eventId).collection('tokens').get();
-  const list = subsSnap.docs.map(d => {
-    const x = d.data() || {};
-    return { uid: x.uid || null, email: x.email || null, subscribedAt: x.subscribedAt || null };
-  });
-  // Sort by subscribedAt desc if available
-  list.sort((a,b) => (b.subscribedAt?.toMillis?.()||0) - (a.subscribedAt?.toMillis?.()||0));
-  return { items: list };
-});
+// Removed unused organizer subscriber listing callable (not used by client)
 
 // Send a confirmation email when a user subscribes to an event
 export const onUserSubscribedEmail = onDocumentWritten('userSubscriptions/{uid}/events/{eventId}', async (event) => {

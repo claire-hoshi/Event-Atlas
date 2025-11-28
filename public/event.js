@@ -44,6 +44,7 @@ const endIcon = document.getElementById('event-end-icon');
 const eventMaxInput = document.getElementById("event-max");
 const eventImageInput = document.getElementById("event-image");
 const eventDescInput = document.getElementById("event-desc");
+const eventRsvpRequired = document.getElementById('event-rsvp-required');
 const eventError = document.getElementById("event-error");
 const eventSuccess = document.getElementById("event-success");
 const saveDraftBtn = document.getElementById('event-save-draft');
@@ -369,6 +370,7 @@ async function loadDraftFromQuery() {
     if (eventCategorySelect) eventCategorySelect.value = d.category || '';
     if (eventContactInput) eventContactInput.value = d.contactEmail || '';
     if (eventDescInput) eventDescInput.value = d.description || '';
+    try { if (eventRsvpRequired) eventRsvpRequired.checked = !!d.rsvpRequired; } catch {}
     if (locationNameInput) locationNameInput.value = d.locationName || '';
     if (typeof d.lat === 'number' && typeof d.lng === 'number') {
       setLocation(d.lat, d.lng);
@@ -453,6 +455,7 @@ if (discardBtnRef) {
       if (typeof d.lat === 'number' && typeof d.lng === 'number') { setLocation(d.lat, d.lng); try { placeOrMoveMarker(d.lat, d.lng); } catch {} }
       if (d.startTime) { const s = new Date(d.startTime); if (startPicker) startPicker.setDate(s, true); if (eventStartIsoHidden) eventStartIsoHidden.value = s.toISOString(); if (eventStartInput && !startPicker) eventStartInput.value = s.toISOString().slice(0,16); }
       if (d.endTime) { const e = new Date(d.endTime); if (endPicker) endPicker.setDate(e, true); if (eventEndIsoHidden) eventEndIsoHidden.value = e.toISOString(); if (eventEndInput && !endPicker) eventEndInput.value = e.toISOString().slice(0,16); }
+      try { if (eventRsvpRequired) eventRsvpRequired.checked = !!d.rsvpRequired; } catch {}
       isDirty = false;
       if (eventSuccess) { eventSuccess.textContent = 'Changes discarded.'; eventSuccess.style.display = 'block'; }
     } catch {}
@@ -557,6 +560,7 @@ if (eventForm) {
 
     const maxAttendees = eventMaxInput?.value ? Number(eventMaxInput.value) : null;
     const description = (eventDescInput?.value || "").trim();
+    const rsvpRequired = !!(eventRsvpRequired && eventRsvpRequired.checked);
 
     try {
       const user = auth.currentUser;
@@ -569,6 +573,7 @@ if (eventForm) {
         endTime: end.toISOString(),
         maxAttendees: maxAttendees || null,
         description,
+        rsvpRequired,
         // Location fields (optional)
         locationName: (locationNameInput?.value || '').trim() || null,
         lat: latInput?.value ? Number(latInput.value) : null,
@@ -651,6 +656,7 @@ if (saveDraftBtn) {
     const endISO = (eventEndIsoHidden?.value || eventEndInput?.value || '').trim() || null;
     const maxAttendees = eventMaxInput?.value ? Number(eventMaxInput.value) : null;
     const description = (eventDescInput?.value || '').trim() || null;
+    const rsvpRequired = !!(eventRsvpRequired && eventRsvpRequired.checked);
     const locName = (locationNameInput?.value || '').trim() || null;
     
     try {
@@ -665,6 +671,7 @@ if (saveDraftBtn) {
         endTime: endISO,
         maxAttendees: maxAttendees || null,
         description: description || null,
+        rsvpRequired,
         locationName: locName,
         lat: latInput?.value ? Number(latInput.value) : null,
         lng: lngInput?.value ? Number(lngInput.value) : null,

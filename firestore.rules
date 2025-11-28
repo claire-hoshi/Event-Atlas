@@ -58,9 +58,10 @@ service cloud.firestore {
       allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
 
-    // Reports: anyone signed-in can create; only DSG admin can read/manage
+    // Reports: allow create from anyone (no sign-in required) to reduce friction
+    // Only DSG admin can read/manage
     match /reports/{rid} {
-      allow create: if isSignedIn();
+      allow create: if true;
       allow read, update, delete: if isSignedIn() && request.auth.token.email == 'kureahoshi_2026@depauw.edu';
     }
 

@@ -20,6 +20,9 @@ import {
 const auth = getAuth();
 const db = getFirestore();
 const functionsRef = getFunctions(undefined, 'us-central1');
+const isPublicMode = () => {
+  try { return !!window.PUBLIC_MODE; } catch { return false; }
+};
 
 // DOM references
 const attendeeView = document.getElementById("attendee-view");
@@ -67,12 +70,8 @@ const exploreView = document.getElementById("explore-view");
 const profileView = document.getElementById("profile-view");
 const savedView = document.getElementById('saved-view');
 const savedList = document.getElementById('saved-list');
-const notificationsView = document.getElementById('notifications-view');
+// notifications UI removed
 const subscribedList = null;
-const notifEnableBtn = document.getElementById('notif-enable-btn');
-const notifPermStatus = document.getElementById('notif-perm-status');
-const notifFeed = document.getElementById('notif-feed');
-const notifMarkAll = document.getElementById('notif-mark-all');
 const openProfileBtn = document.getElementById("open-profile-btn");
 const closeProfileBtn = document.getElementById("close-profile-btn");
 const leftRail = document.getElementById('left-rail');
@@ -102,6 +101,7 @@ let currentScope = 'all'; // 'all' for students, 'my' or 'others' for organizers
 let currentUid = null;
 let currentCategory = 'all'; // kept for backward compatibility
 let currentCategories = [];   // multi-select active values
+let pendingCategories = [];   // staged multi-select until Apply filters
 let currentQuery = '';
 let currentLocation = '';
 // Pending values typed by the user; applied only when pressing the search button or Enter
@@ -247,8 +247,19 @@ function updateCount(n) {
   el.textContent = `${n} ${n === 1 ? 'event' : 'events'} found`;
 }
 
+function getThisWeekBounds() {
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const day = d.getDay(); // 0=Sun..6=Sat
+  const mondayOffset = (day === 0 ? -6 : 1 - day); // Monday as first day
+  const start = new Date(d); start.setDate(d.getDate() + mondayOffset); start.setHours(0,0,0,0);
+  const end = new Date(start); end.setDate(start.getDate() + 7); end.setMilliseconds(-1);
+  return { startMs: start.getTime(), endMs: end.getTime() };
+}
+
 async function renderListAndMarkers() {
   if (!map) initMap();
+  // Public mode no longer restricts to this week; show all unless user sets filters
   clearList();
   markersLayer.clearLayers();
 
@@ -261,19 +272,29 @@ async function renderListAndMarkers() {
     // Default: by start time asc
     filtered.sort((a,b) => (toMs(a.startTime)||0) - (toMs(b.startTime)||0));
   }
-  // Students: count only upcoming; Organizers: count all
-  const countVisible = isOrganizer ? filtered.length : visibleFiltered.filter(isUpcoming).length;
+  // Determine if any filter is active (keyword, location, date range, category)
+  const anyFilterActive = !!((currentQuery||'').trim() || (currentLocation||'').trim() ||
+    (!isNaN(timeStartMs) || !isNaN(timeEndMs)) || (Array.isArray(currentCategories) && currentCategories.length > 0));
+
+  // Students: when filters are active, show only upcoming; otherwise allow fallback to visible
+  const upcomingOnly = visibleFiltered.filter(isUpcoming);
+  const isOthersScope = isOrganizer && (currentScope === 'others');
+  const countVisible = isOrganizer
+    ? (isOthersScope ? upcomingOnly.length : visibleFiltered.length)
+    : (anyFilterActive ? upcomingOnly.length : (upcomingOnly.length || visibleFiltered.length));
   updateCount(countVisible);
 
   const byIdMarker = new Map();
   const bounds = [];
 
   // Grouping
-  const up = visibleFiltered.filter(isUpcoming);
+  const up = upcomingOnly;
   const past = visibleFiltered.filter(e => !isUpcoming(e));
   const groups = isOrganizer
-    ? [ { title: 'Upcoming events', items: up }, { title: 'Past events', items: past } ]
-    : [ { title: '', items: up } ];
+    ? (isOthersScope
+        ? [ { title: 'Upcoming events', items: up } ]
+        : [ { title: 'Upcoming events', items: up }, { title: 'Past events', items: past } ])
+    : [ { title: '', items: (anyFilterActive ? up : (up.length ? up : visibleFiltered)) } ];
 
   const renderOne = (evt) => {
     // List item
@@ -303,8 +324,6 @@ async function renderListAndMarkers() {
       const color = CATEGORY_COLORS[evt.category] || CATEGORY_COLORS.default;
       const mk = L.marker([evt.lat, evt.lng], { icon: createPinIcon(color) });
       const max = evt.maxAttendees ? `Max ${evt.maxAttendees} attendees` : '';
-      const desc = (evt.description || '').toString().trim();
-      const short = desc.length > 160 ? desc.slice(0, 157) + '…' : desc;
       const canEdit = isOrganizer && currentScope === 'my' && String(evt.organizerUid||'') === String(currentUid||'');
       const popup = `
         <div style="min-width:260px">
@@ -315,7 +334,7 @@ async function renderListAndMarkers() {
             ${where ? `<div><i class="map marker alternate icon" style="margin-right:6px;color:#6b7280;"></i>${where}</div>` : ''}
             ${max ? `<div><i class="users icon" style="margin-right:6px;color:#6b7280;"></i>${max}</div>` : ''}
           </div>
-          ${short ? `<div style="color:#374151;margin-bottom:8px;line-height:1.35;">${short.replace(/</g,'&lt;')}</div>` : ''}
+          
           <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
             ${canEdit ? `<button class=\"ui button tiny\" data-edit-id=\"${evt.__id}\">Edit</button>` : ''}
             <button class="ui button tiny" data-view-id="${evt.__id}">View details</button>
@@ -418,9 +437,10 @@ async function openEventDetail(evt){
   const aboutLink = document.getElementById('event-about-link');
   const detailsCategory = document.getElementById('event-details-category');
   const detailsMax = document.getElementById('event-details-max');
-  const addCalBtn = document.getElementById('event-addcal-btn');
   const interested = document.getElementById('event-interest-btn');
   const interested2 = document.getElementById('event-interest-btn-2');
+  const rsvpBtn = document.getElementById('event-rsvp-btn');
+  const rsvpNote = document.getElementById('event-rsvp-note');
   const interestCount = document.getElementById('event-interest-count');
   const viewMapBtn = document.getElementById('event-view-map-btn');
   const reportBtn = document.getElementById('event-report-btn');
@@ -437,6 +457,12 @@ async function openEventDetail(evt){
   descEl.textContent = desc || '';
   if (evt.imageURL) { hero.style.display='block'; heroImg.src = evt.imageURL; }
   else { hero.style.display='none'; try { heroImg.removeAttribute('src'); } catch {} }
+
+  // In public mode, hide all attendee action buttons (save/RSVP/add calendar/report)
+  if (isPublicMode()) {
+    try { const actions = document.querySelector('.event-actions'); if (actions) actions.style.display = 'none'; } catch {}
+    try { if (rsvpNote) rsvpNote.style.display = 'none'; } catch {}
+  }
 
   // Ensure Saved state is consistent with userSubscriptions so the Saved page reflects it
   try {
@@ -463,11 +489,12 @@ async function openEventDetail(evt){
     const actions = document.querySelector('.event-actions');
     const interestedBtn = document.getElementById('event-interest-btn');
     const interestedBtn2 = document.getElementById('event-interest-btn-2');
-    const addCalBtn = document.getElementById('event-addcal-btn');
+    const rsvpBtnLocal = document.getElementById('event-rsvp-btn');
     if (owner) {
       if (interestedBtn) interestedBtn.style.display='none';
       if (interestedBtn2) interestedBtn2.style.display='none';
-      if (addCalBtn) addCalBtn.style.display='none';
+      if (rsvpBtnLocal) rsvpBtnLocal.remove();
+      try { const note = document.getElementById('event-rsvp-note'); if (note) note.style.display = 'none'; } catch {}
       if (actions && !actions.querySelector('[data-edit-event]')) {
         const editA = document.createElement('a');
         editA.setAttribute('data-edit-event','1');
@@ -480,7 +507,6 @@ async function openEventDetail(evt){
     } else {
       if (interestedBtn) interestedBtn.style.display='';
       if (interestedBtn2) interestedBtn2.style.display='';
-      if (addCalBtn) addCalBtn.style.display='none';
       const extra = actions && actions.querySelector('[data-edit-event]'); if (extra) extra.remove();
     }
   } catch {}
@@ -495,35 +521,15 @@ async function openEventDetail(evt){
   detailsCategory.textContent = evt.category || '—';
   detailsMax.textContent = evt.maxAttendees ? String(evt.maxAttendees) : '—';
 
-  // Add to calendar: build ICS data URL
-  try {
-    const toICSDate = (iso) => {
-      const d = new Date(iso);
-      const pad = (n) => String(n).padStart(2,'0');
-      const y = d.getUTCFullYear();
-      const m = pad(d.getUTCMonth()+1);
-      const day = pad(d.getUTCDate());
-      const hh = pad(d.getUTCHours());
-      const mm = pad(d.getUTCMinutes());
-      const ss = pad(d.getUTCSeconds());
-      return `${y}${m}${day}T${hh}${mm}${ss}Z`;
-    };
-    const uid = evt.__id || Math.random().toString(36).slice(2);
-    const dtStart = toICSDate(evt.startTime);
-    const dtEnd = toICSDate(evt.endTime || evt.startTime);
-    const summary = (evt.title || 'Event').replace(/\n/g,' ');
-    const descICS = (evt.description || '').replace(/\n/g,'\\n');
-    const loc = (evt.locationName || '').replace(/\n/g,' ');
-    const ics = `BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Event Atlas//EN\nBEGIN:VEVENT\nUID:${uid}\nDTSTAMP:${toICSDate(new Date().toISOString())}\nDTSTART:${dtStart}\nDTEND:${dtEnd}\nSUMMARY:${summary}\nDESCRIPTION:${descICS}\nLOCATION:${loc}\nEND:VEVENT\nEND:VCALENDAR`;
-    const blob = new Blob([ics], { type: 'text/calendar' });
-    const url = URL.createObjectURL(blob);
-    addCalBtn.href = url;
-    addCalBtn.download = `${summary.replace(/[^a-z0-9_-]+/gi,'_')}.ics`;
-  } catch {}
+  // Add-to-calendar feature removed per request
 
   // Interested + Notifications subscription
   function setInterested(active){
-    [interested, interested2].forEach(btn => { if (!btn) return; btn.classList.toggle('active', !!active); btn.innerHTML = active ? '<i class="heart icon"></i> Saved' : '<i class="heart outline icon"></i> Save event'; });
+    [interested, interested2].forEach(btn => {
+      if (!btn) return;
+      btn.classList.toggle('active', !!active);
+      btn.innerHTML = active ? '<i class="bookmark icon"></i> Saved' : '<i class="bookmark outline icon"></i> Save';
+    });
   }
   async function setSubscribedUI(){
     // Best-effort: use local flag, since reading token membership is restricted
@@ -553,6 +559,9 @@ async function openEventDetail(evt){
           localStorage.setItem(key, '1');
         }
       } else if (sup && currently) {
+        // Confirm unsave
+        const ok = await openConfirm('Are you sure you want to unsave the event?', 'Unsave', 'Keep');
+        if (!ok) return;
         // Try to unsubscribe; even if it fails, toggle off locally
         try {
           const res = await unsubscribeFromEvent(evt.__id);
@@ -566,6 +575,10 @@ async function openEventDetail(evt){
         }
       } else {
         // Fallback to local toggle only
+        if (currently) {
+          const ok = await openConfirm('Are you sure you want to unsave the event?', 'Unsave', 'Keep');
+          if (!ok) return;
+        }
         localStorage.setItem(key, currently ? '0' : '1');
       }
       // Also write a simple registration document with name/email for organizer lists
@@ -620,26 +633,135 @@ async function openEventDetail(evt){
     reportBtn._bound = true;
     reportBtn.addEventListener('click', () => openReportModal(evt));
   }
-  // Organizer-owner: show subscriber list via callable function
+  // RSVP required note
+  try { if (rsvpNote) rsvpNote.style.display = evt.rsvpRequired ? '' : 'none'; } catch {}
+  // RSVP button (students)
+  try {
+    if (rsvpBtn) {
+      const user = auth.currentUser;
+      const isOwner = isOrganizer && String(evt.organizerUid||'') === String(currentUid||'');
+      // Hide RSVP for organizers/owners, or when event doesn't require RSVP
+      const requires = !!evt.rsvpRequired;
+      rsvpBtn.style.display = (!user || isOwner || !requires) ? 'none' : '';
+      let rsvpState = false; // last known registration state
+      async function setRsvpUI(){
+        const u = auth.currentUser;
+        let registered = false;
+        try {
+          if (u) {
+            const ref = doc(getFirestore(), 'eventRegistrations', String(evt.__id), 'users', u.uid);
+            const snap = await getDoc(ref); // may fail due to rules for students
+            registered = !!snap?.exists?.();
+          }
+        } catch {
+          // Fallback to local indicator when read is not permitted for students
+          try { registered = localStorage.getItem('rsvp:'+String(evt.__id)) === '1'; } catch {}
+        } finally {
+          rsvpState = registered;
+          // Always show a checkmark icon in the RSVP button UI
+          rsvpBtn.innerHTML = registered ? '<i class="check icon"></i> Registered' : '<i class="check icon"></i> RSVP';
+          rsvpBtn.classList.toggle('active', !!registered);
+          rsvpBtn.disabled = false; rsvpBtn.setAttribute('aria-disabled','false');
+          // Note message: thank you vs requirement
+          try {
+            if (rsvpNote && evt.rsvpRequired) {
+              rsvpNote.style.display = '';
+              rsvpNote.textContent = registered ? 'Thank you for registering for the event!' : 'RSVP is required for this event.';
+              rsvpNote.classList.toggle('green', !!registered);
+              rsvpNote.classList.toggle('red', !registered);
+            }
+          } catch {}
+        }
+      }
+      if (!rsvpBtn._bound) {
+        rsvpBtn._bound = true;
+        rsvpBtn.addEventListener('click', async () => {
+          try {
+            const u = auth.currentUser; if (!u) { alert('Please sign in first.'); return; }
+            rsvpBtn.disabled = true; rsvpBtn.setAttribute('aria-disabled','true');
+            const ref = doc(getFirestore(), 'eventRegistrations', String(evt.__id), 'users', u.uid);
+            const willRegister = !rsvpState;
+            if (willRegister) {
+              // Assume not registered and attempt to create
+              await setDoc(ref, {
+                uid: u.uid,
+                email: u.email || '',
+                name: u.displayName || (u.email ? u.email.split('@')[0] : ''),
+                registeredAt: serverTimestamp()
+              }, { merge: true });
+              try {
+                localStorage.setItem('rsvp:'+String(evt.__id), '1');
+                localStorage.setItem('interest:'+String(evt.__id), '1'); // reflect Saved state in UI
+              } catch {}
+              // Also auto-save the event so student gets updates
+              try {
+                const usRef = doc(getFirestore(), 'userSubscriptions', u.uid, 'events', String(evt.__id));
+                await setDoc(usRef, {
+                  eventId: String(evt.__id),
+                  title: evt.title || '',
+                  startTime: evt.startTime || null,
+                  endTime: evt.endTime || null,
+                  locationName: evt.locationName || null,
+                  savedAt: serverTimestamp()
+                }, { merge: true });
+              } catch {}
+              // Flip the Save button UI immediately
+              try { setInterested(true); if (interestCount) interestCount.textContent = '1'; } catch {}
+              try { await subscribeToEvent(evt.__id).catch(()=>{}); } catch {}
+            } else {
+              // Confirm unregistration
+              const ok = await openConfirm('Are you sure you want to unregister?', 'Unregister', 'Keep');
+              if (!ok) { rsvpBtn.disabled = false; rsvpBtn.setAttribute('aria-disabled','false'); return; }
+              // Remove registration; delete on server even if it may not exist (deletes are idempotent)
+              await deleteDoc(ref).catch(()=>{});
+              // Clear local indicator; keep Saved state unchanged
+              try { localStorage.removeItem('rsvp:'+String(evt.__id)); } catch {}
+              // Optional follow-up: also unsave?
+              try {
+                const key = 'interest:'+String(evt.__id);
+                const isSaved = localStorage.getItem(key) === '1';
+                if (isSaved) {
+                  const also = await openConfirm('Do you also want to unsave this event?', 'Unsave', 'Keep');
+                  if (also) {
+                    try { await unsubscribeFromEvent(evt.__id); } catch {}
+                    try { localStorage.setItem(key, '0'); } catch {}
+                  }
+                }
+              } catch {}
+            }
+          } catch {}
+          try { await setRsvpUI(); } catch {}
+          try { await setSubscribedUI(); } catch {}
+          rsvpBtn.disabled = false; rsvpBtn.setAttribute('aria-disabled','false');
+        });
+      }
+      setRsvpUI();
+    }
+  } catch {}
+
+  // Organizer-owner: show subscriber/RSVP list
   try {
     const owner = isOrganizer && String(evt.organizerUid||'') === String(currentUid||'');
     if (owner && ownerSubs && subsList) {
       ownerSubs.style.display = '';
       subsList.innerHTML = '';
-      const fn = httpsCallable(functionsRef, 'getEventSubscribers');
-      const res = await fn({ eventId: String(evt.__id) });
-      const items = Array.isArray(res.data?.items) ? res.data.items : [];
-      subsList.innerHTML = '';
-      if (!items.length) {
-        subsList.innerHTML = '<div style="color:#6b7280;">No one has registered yet.</div>';
-      } else {
-        items.forEach(it => {
-          const row = document.createElement('div'); row.className='subscriber';
-          const left = document.createElement('div'); left.className='email'; left.textContent = it.email || '(no email)';
-          const right = document.createElement('div'); right.className='when';
-          try { right.textContent = it.subscribedAt ? new Date(it.subscribedAt._seconds*1000).toLocaleString() : ''; } catch { right.textContent=''; }
-          row.appendChild(left); row.appendChild(right); subsList.appendChild(row);
-        });
+      // Fetch RSVP registrations with name+email
+      try {
+        const snap = await getDocs(query(collection(getFirestore(), 'eventRegistrations', String(evt.__id), 'users'), orderBy('registeredAt','desc')));
+        if (snap.empty) {
+          subsList.innerHTML = '<div style="color:#6b7280;">No one has registered yet.</div>';
+        } else {
+          snap.docs.forEach(d => {
+            const it = d.data() || {};
+            const row = document.createElement('div'); row.className='subscriber';
+            const left = document.createElement('div'); left.className='email'; left.textContent = `${it.name || ''} ${it.email ? '• ' + it.email : ''}`.trim();
+            const right = document.createElement('div'); right.className='when';
+            try { right.textContent = it.registeredAt ? new Date(it.registeredAt.toMillis ? it.registeredAt.toMillis() : it.registeredAt).toLocaleString() : ''; } catch { right.textContent=''; }
+            row.appendChild(left); row.appendChild(right); subsList.appendChild(row);
+          });
+        }
+      } catch {
+        subsList.innerHTML = '<div style="color:#6b7280;">Unable to load registrations.</div>';
       }
     } else if (ownerSubs) {
       ownerSubs.style.display = 'none';
@@ -687,8 +809,10 @@ try {
   const typeSel = document.getElementById('report-type');
   const rowAtt = document.getElementById('report-attendee-row');
   const rowEvent = document.getElementById('report-event-row');
+  const rowEventOrg = document.getElementById('report-event-org-row');
   const attEmail = document.getElementById('report-attendee-email');
-  const eventRef = document.getElementById('report-event-ref');
+  const eventTitleInput = document.getElementById('report-event-title');
+  const eventOrgInput = document.getElementById('report-event-org');
   const reasonSel = document.getElementById('report-reason');
   const details = document.getElementById('report-details');
   const error = document.getElementById('report-error');
@@ -697,25 +821,18 @@ try {
   if (backdrop && !backdrop._bound) { backdrop._bound = true; backdrop.addEventListener('click', hide); }
   if (closeBtn && !closeBtn._bound) { closeBtn._bound = true; closeBtn.addEventListener('click', hide); }
   if (cancelBtn && !cancelBtn._bound) { cancelBtn._bound = true; cancelBtn.addEventListener('click', hide); }
-  if (typeSel && !typeSel._bound) { typeSel._bound = true; typeSel.addEventListener('change', ()=> { if (rowAtt) rowAtt.style.display = typeSel.value === 'attendee' ? '' : 'none'; if (rowEvent) rowEvent.style.display = (typeSel.value === 'event' && !currentReportEvent) ? '' : 'none'; }); }
+  if (typeSel && !typeSel._bound) { typeSel._bound = true; typeSel.addEventListener('change', ()=> { if (rowAtt) rowAtt.style.display = typeSel.value === 'attendee' ? '' : 'none'; if (rowEvent) rowEvent.style.display = (typeSel.value === 'event' && !currentReportEvent) ? '' : 'none'; if (rowEventOrg) rowEventOrg.style.display = (typeSel.value === 'event' && !currentReportEvent) ? '' : 'none'; }); }
   if (submitBtn && !submitBtn._bound) {
     submitBtn._bound = true;
     submitBtn.addEventListener('click', async () => {
       try {
         const user = auth.currentUser; if (!user) { if (error){ error.textContent='Sign in required.'; error.style.display=''; } return; }
-        const parseEventId = (v) => {
-          try {
-            const s = String(v||'').trim(); if (!s) return '';
-            const m = s.match(/event=([^&#]+)/); if (m) return decodeURIComponent(m[1]);
-            return s; // assume raw ID
-          } catch { return ''; }
-        };
-        const manualEventId = parseEventId(eventRef?.value || '');
         const payload = {
           type: typeSel?.value || 'event',
-          eventId: String(currentReportEvent?.__id || manualEventId || ''),
-          eventTitle: String(currentReportEvent?.title || ''),
+          eventId: String(currentReportEvent?.__id || ''),
+          eventTitle: String(currentReportEvent?.title || eventTitleInput?.value || ''),
           organizerUid: String(currentReportEvent?.organizerUid || ''),
+          organizerName: String(currentReportEvent?.organization || eventOrgInput?.value || ''),
           attendeeEmail: String(attEmail?.value || '').trim() || null,
           reason: String(reasonSel?.value || ''),
           details: String(details?.value || '').slice(0, 2000),
@@ -724,17 +841,21 @@ try {
           createdAt: serverTimestamp(),
           status: 'new'
         };
-        // Basic validation
-        if (payload.type === 'event' && !payload.eventId) { if (error){ error.textContent='Provide an event link or ID.'; error.style.display=''; } return; }
-        if (!payload.details) { if (error){ error.textContent='Please provide details.'; error.style.display=''; } return; }
-        // If manual event id was provided, try to enrich title/org
+        // Basic validation: require event title and organizer (no event link/ID required)
+        if (payload.type === 'event') {
+          if (!payload.eventTitle) { if (error){ error.textContent='Please enter the event title.'; error.style.display=''; } return; }
+          if (!payload.organizerName) { if (error){ error.textContent='Please enter the event organizer.'; error.style.display=''; } return; }
+        }
+        // Details optional per request
+        // If an ID is present, try to enrich from Firestore (optional)
         if (!currentReportEvent && payload.eventId) {
           try {
             const evSnap = await getDoc(doc(db, 'events', payload.eventId));
             if (evSnap.exists()) {
               const ev = evSnap.data();
-              payload.eventTitle = ev?.title || payload.eventTitle || '';
-              payload.organizerUid = ev?.organizerUid || payload.organizerUid || '';
+              payload.eventTitle = payload.eventTitle || ev?.title || '';
+              payload.organizerUid = payload.organizerUid || ev?.organizerUid || '';
+              payload.organizerName = payload.organizerName || ev?.organization || '';
             }
           } catch {}
         }
@@ -850,17 +971,21 @@ function buildCategoryChips() {
     { key: 'Community', label: 'Community', color: CATEGORY_COLORS.Community },
     { key: 'Social', label: 'Social', color: CATEGORY_COLORS.Social },
   ];
+  // Initialize staged selection to current on first build
+  pendingCategories = Array.from(currentCategories);
   CATS.forEach(c => {
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'chip';
     chip.dataset.key = c.key;
     chip.textContent = c.label; // remove colored dots
+    // Reflect initial staged selection
+    chip.classList.toggle('active', pendingCategories.includes(c.key));
     chip.addEventListener('click', async () => {
-      currentCategories = [c.key];
+      pendingCategories = [c.key];
       const children = categoryChipsEl.querySelectorAll('.chip');
       children.forEach(el => el.classList.toggle('active', el.dataset.key === c.key));
-      await loadEvents();
+      // Do not apply immediately; wait for Apply filters
       updateFilterSummary();
     });
     categoryChipsEl.appendChild(chip);
@@ -886,12 +1011,12 @@ function buildCategoriesSheet(){
       const cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = `cat-${c.key}`; cb.value = c.key;
       const lbl = document.createElement('label'); lbl.setAttribute('for', `cat-${c.key}`); lbl.textContent = c.label;
       // If none selected, treat as All (UI shows none checked)
-      cb.checked = currentCategories.includes(c.key);
+      cb.checked = pendingCategories.includes(c.key);
       cb.addEventListener('change', () => {
-        const set = new Set(currentCategories);
+        const set = new Set(pendingCategories);
         if (cb.checked) set.add(c.key); else set.delete(c.key);
-        currentCategories = Array.from(set);
-        loadEvents(); updateFilterSummary();
+        pendingCategories = Array.from(set);
+        updateFilterSummary();
       });
       row.appendChild(cb); row.appendChild(lbl); categoryListEl.appendChild(row);
     });
@@ -944,19 +1069,17 @@ function attachFilterHandlers() {
     finalFilterBtn._bound = true;
     finalFilterBtn.addEventListener('click', async () => {
       try {
-        // If date panel is open, commit its temporary range
+        // Always commit staged date range, whether using inline accordion or modal sheet
+        timeStartMs = tempStartMs; timeEndMs = tempEndMs;
+        try { setTimeBtnLabel(isNaN(timeStartMs)?null:new Date(timeStartMs), isNaN(timeEndMs)?null:new Date(timeEndMs)); } catch {}
         if (filterModal && filterModal.style.display !== 'none') {
-          if (!isNaN(tempStartMs) || !isNaN(tempEndMs)) {
-            timeStartMs = tempStartMs; timeEndMs = tempEndMs;
-            try { setTimeBtnLabel(isNaN(timeStartMs)?null:new Date(timeStartMs), isNaN(timeEndMs)?null:new Date(timeEndMs)); } catch {}
-          }
           filterModal.style.display = 'none'; filterModal.setAttribute('aria-hidden','true');
         }
       } catch {}
       try {
-        // If categories panel is open, commit selection
+        // Commit staged category selection (from chips or panel)
+        currentCategories = Array.from(pendingCategories);
         if (categoriesModal && categoriesModal.style.display !== 'none') {
-          currentCategory = pendingCategory || 'all';
           categoriesModal.style.display = 'none'; categoriesModal.setAttribute('aria-hidden','true');
         }
       } catch {}
@@ -969,22 +1092,21 @@ function attachFilterHandlers() {
     clearCatsBtn._bound = true;
     clearCatsBtn.addEventListener('click', () => {
       try {
-        currentCategories = [];
+        pendingCategories = [];
         const list = document.getElementById('category-list');
         if (list) list.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
-        loadEvents();
         updateFilterSummary();
       } catch {}
     });
   }
   // Categories sheet handlers
-  function openCats(){ if (!categoriesModal) return; pendingCategory = currentCategory || 'all'; buildCategoriesSheet(); categoriesModal.style.display = 'block'; categoriesModal.setAttribute('aria-hidden','false'); }
+  function openCats(){ if (!categoriesModal) return; pendingCategories = Array.from(currentCategories); buildCategoriesSheet(); categoriesModal.style.display = 'block'; categoriesModal.setAttribute('aria-hidden','false'); }
   function closeCats(){ if (!categoriesModal) return; categoriesModal.style.display = 'none'; categoriesModal.setAttribute('aria-hidden','true'); }
   if (openCatsBtn && !openCatsBtn._bound) { openCatsBtn._bound = true; openCatsBtn.addEventListener('click', openCats); }
   if (categoriesBackdrop && !categoriesBackdrop._bound) { categoriesBackdrop._bound = true; categoriesBackdrop.addEventListener('click', closeCats); }
   if (closeCatsBtn && !closeCatsBtn._bound) { closeCatsBtn._bound = true; closeCatsBtn.addEventListener('click', closeCats); }
   if (cancelCatsBtn && !cancelCatsBtn._bound) { cancelCatsBtn._bound = true; cancelCatsBtn.addEventListener('click', closeCats); }
-  if (applyCatsBtn && !applyCatsBtn._bound) { applyCatsBtn._bound = true; applyCatsBtn.addEventListener('click', async () => { currentCategory = pendingCategory || 'all'; await loadEvents(); closeCats(); }); }
+  if (applyCatsBtn && !applyCatsBtn._bound) { applyCatsBtn._bound = true; applyCatsBtn.addEventListener('click', async () => { currentCategories = Array.from(pendingCategories); await loadEvents(); updateFilterSummary(); closeCats(); }); }
   // Location sheet handlers (new UI)
   function openLocation(){ if (!locationModal) return; seedLocationSuggestions(); locationModal.style.display='block'; locationModal.setAttribute('aria-hidden','false'); try { locationModalInput && locationModalInput.focus(); } catch {} }
   function closeLocation(){ if (!locationModal) return; locationModal.style.display='none'; locationModal.setAttribute('aria-hidden','true'); }
@@ -1010,13 +1132,12 @@ function attachFilterHandlers() {
               const end = endRaw || start;
               const s = new Date(start.getFullYear(), start.getMonth(), start.getDate(), 0,0,0,0);
               const e = new Date(end.getFullYear(), end.getMonth(), end.getDate(), 23,59,59,999);
-              timeStartMs = s.getTime();
-              timeEndMs = e.getTime();
-              setTimeBtnLabel(s, e);
+              tempStartMs = s.getTime();
+              tempEndMs = e.getTime();
             } else {
-              timeStartMs = NaN; timeEndMs = NaN; setTimeBtnLabel();
+              tempStartMs = NaN; tempEndMs = NaN;
             }
-          renderListAndMarkers(); updateFilterSummary();
+          updateFilterSummary();
         }
       });
         try { inlineCalendar.style.minHeight = '360px'; fpRange.redraw && fpRange.redraw(); } catch {}
@@ -1046,9 +1167,9 @@ function attachFilterHandlers() {
           const sVal = sInp.value; const eVal = eInp.value || sVal;
           if (sVal) {
             const s = new Date(sVal+'T00:00:00'); const e = new Date(eVal+'T23:59:59');
-            timeStartMs = s.getTime(); timeEndMs = e.getTime(); setTimeBtnLabel(s,e);
-          } else { timeStartMs = NaN; timeEndMs = NaN; setTimeBtnLabel(); }
-          renderListAndMarkers();
+            tempStartMs = s.getTime(); tempEndMs = e.getTime();
+          } else { tempStartMs = NaN; tempEndMs = NaN; }
+          updateFilterSummary();
         };
         sInp.addEventListener('change', apply);
         eInp.addEventListener('change', apply);
@@ -1073,9 +1194,9 @@ function attachFilterHandlers() {
   if (clearDatesBtn && !clearDatesBtn._bound) {
     clearDatesBtn._bound = true;
     clearDatesBtn.addEventListener('click', () => {
-      timeStartMs = NaN; timeEndMs = NaN; setTimeBtnLabel();
+      tempStartMs = NaN; tempEndMs = NaN; setTimeBtnLabel();
       try { fpRange && fpRange.clear(); } catch {}
-      renderListAndMarkers();
+      updateFilterSummary();
     });
   }
 
@@ -1115,12 +1236,35 @@ function attachFilterHandlers() {
   if (filterBackdrop && !filterBackdrop._bound) { filterBackdrop._bound = true; filterBackdrop.addEventListener('click', closePanel); }
   if (closeFilterBtn && !closeFilterBtn._bound) { closeFilterBtn._bound = true; closeFilterBtn.addEventListener('click', closePanel); }
   if (cancelFilterBtn && !cancelFilterBtn._bound) { cancelFilterBtn._bound = true; cancelFilterBtn.addEventListener('click', closePanel); }
+  if (clearFiltersBtn && !clearFiltersBtn._bound) {
+    clearFiltersBtn._bound = true;
+    clearFiltersBtn.addEventListener('click', async () => {
+      // Reset staged and applied filters
+      pendingQuery = '';
+      pendingLocation = '';
+      pendingCategories = [];
+      tempStartMs = NaN; tempEndMs = NaN; currentSort = 'date';
+      // Reset inputs
+      try { if (searchInput) searchInput.value = ''; } catch {}
+      try { if (locationInput) locationInput.value = ''; } catch {}
+      try { fpRange && fpRange.clear(); fpPanel && fpPanel.clear(); } catch {}
+      // Commit immediately to show all events
+      currentCategories = [];
+      timeStartMs = NaN; timeEndMs = NaN; setTimeBtnLabel();
+      applySearchFilters();
+      try { await loadEvents(); } catch {}
+    });
+  }
   if (applyFilterBtn && !applyFilterBtn._bound) {
     applyFilterBtn._bound = true;
     applyFilterBtn.addEventListener('click', async () => {
       currentSort = (sortSelect?.value || 'date');
-      timeStartMs = tempStartMs; timeEndMs = tempEndMs; setTimeBtnLabel(isNaN(timeStartMs)?null:new Date(timeStartMs), isNaN(timeEndMs)?null:new Date(timeEndMs));
-      await renderListAndMarkers();
+      // Commit staged filters
+      currentCategories = Array.from(pendingCategories);
+      timeStartMs = tempStartMs; timeEndMs = tempEndMs;
+      setTimeBtnLabel(isNaN(timeStartMs)?null:new Date(timeStartMs), isNaN(timeEndMs)?null:new Date(timeEndMs));
+      applySearchFilters();
+      try { await loadEvents(); } catch {}
       closePanel();
     });
   }
@@ -1131,14 +1275,14 @@ function attachFilterHandlers() {
     let E = new Date(S);
     if (days === 'today') { E = new Date(S); }
     else { E = new Date(S.getTime() + (Number(days)||0) * 24*60*60*1000 - 1); }
-    // Apply to live filter state
-    timeStartMs = S.getTime();
-    timeEndMs = E.getTime();
+    // Stage values (user must click Apply filters)
+    tempStartMs = S.getTime();
+    tempEndMs = E.getTime();
     setTimeBtnLabel(S, E);
     // Reflect on calendars if available
     try { fpRange && fpRange.setDate([S, E], true); } catch {}
     try { fpPanel && fpPanel.setDate([S, E], true); } catch {}
-    renderListAndMarkers();
+    updateFilterSummary();
     // Anchor simple calendar view to the preset's start month (prevents odd jumps)
     try {
       if (inlineCalendar && inlineCalendar._simple && typeof buildSimpleCalendar === 'function') {
@@ -1193,17 +1337,17 @@ function buildSimpleCalendar(onlyRefresh){
     const date = new Date(state.y, state.m, d);
     const msStart = new Date(state.y, state.m, d,0,0,0,0).getTime();
     const msEnd = new Date(state.y, state.m, d,23,59,59,999).getTime();
-    if (!isNaN(timeStartMs) && isNaN(timeEndMs) && timeStartMs===msStart) cell.classList.add('selected');
-    if (!isNaN(timeStartMs) && !isNaN(timeEndMs) && msStart>=timeStartMs && msEnd<=timeEndMs) cell.classList.add('range');
+    if (!isNaN(tempStartMs) && isNaN(tempEndMs) && tempStartMs===msStart) cell.classList.add('selected');
+    if (!isNaN(tempStartMs) && !isNaN(tempEndMs) && msStart>=tempStartMs && msEnd<=tempEndMs) cell.classList.add('range');
     cell.addEventListener('click', ()=>{
-      if (isNaN(timeStartMs) || (!isNaN(timeStartMs) && !isNaN(timeEndMs))){
-        timeStartMs = msStart; timeEndMs = NaN;
+      if (isNaN(tempStartMs) || (!isNaN(tempStartMs) && !isNaN(tempEndMs))){
+        tempStartMs = msStart; tempEndMs = NaN;
       } else {
-        if (msEnd < timeStartMs){ timeEndMs = timeStartMs; timeStartMs = msStart; }
-        else { timeEndMs = msEnd; }
+        if (msEnd < tempStartMs){ tempEndMs = tempStartMs; tempStartMs = msStart; }
+        else { tempEndMs = msEnd; }
       }
-      setTimeBtnLabel(isNaN(timeStartMs)?null:new Date(timeStartMs), isNaN(timeEndMs)?null:new Date(timeEndMs));
-      renderListAndMarkers(); updateFilterSummary(); buildSimpleCalendar(true);
+      setTimeBtnLabel(isNaN(tempStartMs)?null:new Date(tempStartMs), isNaN(tempEndMs)?null:new Date(tempEndMs));
+      updateFilterSummary(); buildSimpleCalendar(true);
     });
     grid.appendChild(cell);
   }
@@ -1286,14 +1430,14 @@ function applyRange(mode, baseDate){
     s = new Date(calendarAnchor.getFullYear(), calendarAnchor.getMonth(), 1, 0,0,0,0);
     e = new Date(calendarAnchor.getFullYear(), calendarAnchor.getMonth()+1, 0, 23,59,59,999);
   } else { // all
-    timeStartMs = NaN; timeEndMs = NaN; setTimeBtnLabel();
+    tempStartMs = NaN; tempEndMs = NaN; setTimeBtnLabel();
     try { fpRange && fpRange.clear(); } catch {}
-    renderListAndMarkers();
+    updateFilterSummary();
     return;
   }
-  timeStartMs = s.getTime(); timeEndMs = e.getTime(); setTimeBtnLabel(s,e);
+  tempStartMs = s.getTime(); tempEndMs = e.getTime(); setTimeBtnLabel(s,e);
   try { fpRange && fpRange.setDate([s,e], true); } catch {}
-  renderListAndMarkers();
+  updateFilterSummary();
 }
 
 function shiftRange(dir){ // dir=-1 prev, +1 next
@@ -1324,7 +1468,6 @@ function showExplore() {
   if (exploreView) exploreView.style.display = '';
   if (profileView) profileView.style.display = 'none';
   if (savedView) savedView.style.display = 'none';
-  if (notificationsView) notificationsView.style.display = 'none';
   if (attendeeView) attendeeView.classList.remove('profile-open');
   // Give layout a tick to settle, then fix Leaflet sizing
   setTimeout(() => { try { map && map.invalidateSize(); } catch {} }, 60);
@@ -1334,24 +1477,14 @@ function showProfile() {
   if (exploreView) exploreView.style.display = 'none';
   if (profileView) profileView.style.display = '';
   if (savedView) savedView.style.display = 'none';
-  if (notificationsView) notificationsView.style.display = 'none';
   if (attendeeView) attendeeView.classList.add('profile-open');
 }
 
-async function showNotifications() {
-  if (exploreView) exploreView.style.display = 'none';
-  if (profileView) profileView.style.display = 'none';
-  if (savedView) savedView.style.display = 'none';
-  if (notificationsView) notificationsView.style.display = '';
-  if (attendeeView) attendeeView.classList.add('profile-open');
-  try { await loadNotificationsFeed(); } catch {}
-  try { await loadSubscriptions(); } catch {}
-}
+// notifications page removed
 
 async function showSaved() {
   if (exploreView) exploreView.style.display = 'none';
   if (profileView) profileView.style.display = 'none';
-  if (notificationsView) notificationsView.style.display = 'none';
   if (savedView) savedView.style.display = '';
   if (attendeeView) attendeeView.classList.add('profile-open');
   try { await loadSavedEvents(); } catch {}
@@ -1366,7 +1499,7 @@ function attachProfileToggle() {
   function syncRoute() {
     const h = String(window.location.hash || '').toLowerCase();
     if (h.includes('profile')) { showProfile(); }
-    else if (h.includes('notifications')) { showNotifications(); }
+    
     else if (h.includes('saved')) { showSaved(); }
     else { showExplore(); }
   }
@@ -1395,9 +1528,32 @@ function attachOrganizerTabs() {
   setScope('my');
 }
 
+// Boot app for public mode (no auth). Ensures left rail hidden, map on left, and loads week-only events.
+async function bootPublicMode() {
+  try {
+    if (!isPublicMode()) return;
+    // Ensure UI visible
+    if (attendeeView) attendeeView.style.display = 'grid';
+    if (leftRail) leftRail.style.display = 'none';
+    try { document.body.classList.add('public-mode'); } catch {}
+    // Init and wire
+    initMap();
+    attachFilterHandlers();
+    // Always student scope in public mode
+    isOrganizer = false;
+    currentUid = null;
+    setScope('all');
+    // Load events
+    await loadEvents();
+    setTimeout(() => { try { map && map.invalidateSize(); } catch {} }, 50);
+  } catch {}
+}
+
 // Show/hide attendee view with auth state
 onAuthStateChanged(auth, (user) => {
-  if (attendeeView) attendeeView.style.display = user ? "grid" : "none";
+  if (!isPublicMode()) {
+    if (attendeeView) attendeeView.style.display = user ? "grid" : "none";
+  }
   if (leftRail) leftRail.style.display = user ? 'flex' : 'none';
   if (user) {
     currentUid = user.uid;
@@ -1420,8 +1576,7 @@ onAuthStateChanged(auth, (user) => {
         attachFilterHandlers();
         attachProfileToggle();
         if (railHomeBtn && !railHomeBtn._bound) { railHomeBtn._bound = true; railHomeBtn.onclick = () => { showExplore(); setScope(isOrganizer ? 'my' : 'all'); }; }
-        const railNotifyBtn = document.getElementById('rail-notify-btn');
-        if (railNotifyBtn && !railNotifyBtn._bound) { railNotifyBtn._bound = true; railNotifyBtn.onclick = () => { showNotifications(); }; }
+        // notifications button removed
         const railSavedBtn = document.getElementById('rail-saved-btn');
         if (railSavedBtn && !railSavedBtn._bound) { railSavedBtn._bound = true; railSavedBtn.onclick = () => { showSaved(); }; }
         // Show saved button only for students
@@ -1448,8 +1603,18 @@ onAuthStateChanged(auth, (user) => {
     } else {
       setTimeout(boot, 0);
     }
+  } else if (isPublicMode()) {
+    // If user logs out while in public mode, keep public experience
+    bootPublicMode();
   }
 });
+
+// Listen for public mode activation from app.js
+try {
+  document.addEventListener('public-mode', () => { bootPublicMode(); });
+  // If page loads with PUBLIC_MODE already set, boot immediately
+  if (isPublicMode()) { setTimeout(() => bootPublicMode(), 0); }
+} catch {}
 
 // Keep map responsive
 window.addEventListener('resize', () => { try { map && map.invalidateSize(); } catch {} });
@@ -1458,48 +1623,13 @@ window.addEventListener('hashchange', () => {
   try {
     const h = String(location.hash||'').toLowerCase();
     if (h.includes('profile')) showProfile();
-    else if (h.includes('notifications')) showNotifications();
     else if (h.includes('saved')) showSaved();
     else showExplore();
   } catch {}
 });
 
-async function loadNotificationsFeed(){
-  const user = auth.currentUser; if (!user) return;
-  try {
-    if (notifFeed) notifFeed.innerHTML = '';
-    const coll = collection(db, 'userNotifications', user.uid, 'items');
-    const snap = await getDocs(query(coll, orderBy('createdAt', 'desc')));
-    if (notifFeed) notifFeed.innerHTML = '';
-    if (snap.empty) { if (notifFeed) notifFeed.innerHTML = '<div style="color:#6b7280;">No notifications yet.</div>'; return; }
-    snap.docs.forEach(d => {
-      const n = d.data(); n.__id = d.id;
-      const row = document.createElement('div'); row.className = 'notif' + (n.read ? '' : ' unread');
-      const left = document.createElement('div');
-      const title = document.createElement('div'); title.className='title'; title.textContent = n.title || 'Event update';
-      const body = document.createElement('div'); body.className='body'; body.textContent = n.body || '';
-      const meta = document.createElement('div'); meta.className='meta';
-      try { meta.textContent = n.createdAt ? new Date(n.createdAt).toLocaleString() : ''; } catch {}
-      left.appendChild(title); left.appendChild(body); left.appendChild(meta);
-      row.appendChild(left);
-      const right = document.createElement('div');
-      const btn = document.createElement('button'); btn.className='ui button tiny'; btn.textContent='Open';
-      btn.addEventListener('click', ()=> { if (n.eventId) openEventDetailById(n.eventId); });
-      right.appendChild(btn); row.appendChild(right);
-      notifFeed && notifFeed.appendChild(row);
-    });
-    if (notifMarkAll && !notifMarkAll._bound) {
-      notifMarkAll._bound = true;
-      notifMarkAll.addEventListener('click', async () => {
-        try {
-          const snap2 = await getDocs(query(coll));
-          await Promise.all(snap2.docs.map(docSnap => setDoc(docSnap.ref, { read: true }, { merge: true })));
-          loadNotificationsFeed();
-        } catch {}
-      });
-    }
-  } catch (e) { console.log('loadNotificationsFeed failed', e); }
-}
+// notifications feed removed
+async function loadNotificationsFeed(){ return; }
 
 async function loadSavedEvents(){
   const user = auth.currentUser; if (!user) return;
@@ -1546,7 +1676,41 @@ async function loadSavedEvents(){
           loadSavedEvents();
         } catch {}
       });
-      const actions = document.createElement('div'); actions.style.marginLeft='auto'; actions.appendChild(openBtn); actions.appendChild(unsaveBtn); card.appendChild(actions);
+      const actions = document.createElement('div'); actions.style.marginLeft='auto'; actions.appendChild(openBtn); actions.appendChild(unsaveBtn);
+      // If RSVP is required and user appears registered (local flag), show Unregister
+      try {
+        const rsvpLocal = localStorage.getItem('rsvp:'+String(e.__id)) === '1';
+        if (e.rsvpRequired && rsvpLocal) {
+          const unregBtn = document.createElement('button');
+          unregBtn.className = 'ui button tiny';
+          unregBtn.textContent = 'Unregister';
+          unregBtn.style.marginLeft = '8px';
+          unregBtn.addEventListener('click', async () => {
+            try {
+              const ok = await openConfirm('Are you sure you want to unregister?', 'Unregister', 'Keep');
+              if (!ok) return;
+              const user = auth.currentUser; if (!user) return;
+              await deleteDoc(doc(getFirestore(), 'eventRegistrations', String(e.__id), 'users', user.uid)).catch(()=>{});
+              try { localStorage.removeItem('rsvp:'+String(e.__id)); } catch {}
+              // Provide quick feedback and hide the button
+              unregBtn.disabled = true; unregBtn.textContent = 'Unregistered';
+              // Ask whether to unsave as well if it's saved
+              try {
+                const key = 'interest:'+String(e.__id);
+                if (localStorage.getItem(key) === '1') {
+                  const also = await openConfirm('Do you also want to unsave this event?', 'Unsave', 'Keep');
+                  if (also) {
+                    try { await unsubscribeFromEvent(e.__id); } catch {}
+                    try { localStorage.setItem(key, '0'); } catch {}
+                  }
+                }
+              } catch {}
+            } catch {}
+          });
+          actions.appendChild(unregBtn);
+        }
+      } catch {}
+      card.appendChild(actions);
       return card;
     };
     // Upcoming
@@ -1598,16 +1762,5 @@ try {
 } catch {}
 
 async function loadSubscriptions(){
-  const user = auth.currentUser; if (!user) return;
-  // permission
-  try {
-    const perm = Notification?.permission || 'default';
-    if (notifPermStatus) notifPermStatus.textContent = perm.charAt(0).toUpperCase()+perm.slice(1);
-    if (notifEnableBtn && !notifEnableBtn._bound) {
-      notifEnableBtn._bound = true; notifEnableBtn.addEventListener('click', async () => {
-        try { await Notification.requestPermission(); loadSubscriptions(); } catch {}
-      });
-    }
-  } catch {}
-  // list removed from Notifications UI per request; keep permission management only
+  // Notifications UI removed; no-op to avoid DOM references
 }

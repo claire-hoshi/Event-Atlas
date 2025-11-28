@@ -23,5 +23,13 @@ service firebase.storage {
       allow read: if true;
       allow write: if isSignedIn() && request.auth.uid == uid;
     }
+
+    // Site assets (logos, hero images) used in public UI
+    match /siteAssets/{fileName} {
+      // Allow anyone to read (UI images)
+      allow read: if true;
+      // Restrict writes to signed-in owner email (adjust as needed)
+      allow write: if isSignedIn() && request.auth.token.email == 'kureahoshi_2026@depauw.edu';
+    }
   }
 }

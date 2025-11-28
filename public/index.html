@@ -47,24 +47,29 @@
                     <!-- Explore tab -->
                     <div id="explore-view">
                         <div class="attendee-search">
-                            <div class="search-title">DePauw Events</div>
+                            <!-- Site logo placed inside the white card (public view only) -->
+                            <div class="site-logo public-only" aria-label="EventAtlas">
+                                <img src="assets/EventAtlasLogo.png" alt="EventAtlas" />
+                            </div>
                             <div class="split-search" id="split-search">
                                 <div class="split-left">
                                     <i class="search icon" aria-hidden="true"></i>
-                                    <input id="event-search" type="text" placeholder="Search events..." aria-label="Search events by title, org, description" />
+                                    <input id="event-search" type="text" placeholder="Search Events at DePauw University" aria-label="Search Events at DePauw University" />
                                 </div>
                             </div>
+                            <!-- Campus hero image (local file served by Firebase Hosting). Show under the search bar in public view. -->
+                            <div class="depauw-hero public-only">
+                                <img src="assets/depauw-university-2.jpg" alt="DePauw University campus" />
+                            </div>
+                            <div class="filter-results-text">Filter by</div>
                             <div class="filters-card">
-                              <div class="filters-header">
-                                <div class="filter-results-text">Filter results</div>
-                              </div>
 
                               <!-- Accordion-style filter panels -->
                               <div class="filter-accordion" id="filter-accordion">
                                 <!-- Location -->
                                 <div class="acc-item">
                                     <button class="acc-header" type="button" data-acc="loc">
-                                        <span>location</span>
+                                        <span>Location</span>
                                         <i class="chevron down icon" aria-hidden="true"></i>
                                     </button>
                                     <div class="acc-panel" id="acc-loc">
@@ -80,9 +85,9 @@
                                     </div>
                                 </div>
                                 <!-- Dates -->
-                                <div class="acc-item open">
+                                <div class="acc-item">
                                     <button class="acc-header" type="button" data-acc="dates">
-                                        <span>date</span>
+                                        <span>Date</span>
                                         <i class="chevron down icon" aria-hidden="true"></i>
                                     </button>
                                     <div class="acc-panel" id="acc-dates">
@@ -102,7 +107,7 @@
                                 <!-- Categories -->
                                 <div class="acc-item">
                                     <button class="acc-header" type="button" data-acc="cats">
-                                        <span>category</span>
+                                        <span>Category</span>
                                         <i class="chevron down icon" aria-hidden="true"></i>
                                     </button>
                                     <div class="acc-panel" id="acc-cats">
@@ -144,23 +149,7 @@
                         </div>
                     </div>
 
-                    <!-- Notifications tab -->
-                    <div id="notifications-view" style="display:none;">
-                        <div class="section-title">Notifications</div>
-                        <div class="account-panel">
-                            <div class="account-row" id="notif-perm-row">
-                                <div class="row-left"><i class="bell outline icon"></i> Push Permission</div>
-                                <div class="row-right"><span id="notif-perm-status">Unknown</span>
-                                    <button id="notif-enable-btn" class="ui button tiny" type="button">Enable</button>
-                                </div>
-                            </div>
-                            <div class="row-divider"></div>
-                            <div class="account-row"><div class="row-left"><i class="inbox icon"></i> Notification Feed</div><div class="row-right"><button id="notif-mark-all" class="ui button tiny" type="button">Mark all read</button></div></div>
-                            <div id="notif-feed" class="attendee-list"></div>
-                            <div class="row-divider"></div>
-                            
-                        </div>
-                    </div>
+                    
 
                     <!-- Profile tab -->
                     <div id="profile-view" style="display:none;">
@@ -232,11 +221,7 @@
                       <i class="flag outline icon"></i>
                   </button>
                 </div>
-                <div class="nav-row">
-                  <button id="rail-notify-btn" class="rail-btn" title="Notifications" aria-label="Notifications">
-                      <i class="bell outline icon"></i>
-                  </button>
-                </div>
+                
                 <div class="nav-row">
                   <button id="rail-create-btn" class="rail-btn event-style" title="Create Event" aria-label="Create Event" style="display:none;">
                       <i class="plus icon"></i>
@@ -277,8 +262,12 @@
                         <i class="building icon"></i>
                         Organizer Login
                     </button>
+                    <button class="btn btn-secondary" id="public-access-btn" type="button" style="margin-top:8px;">
+                        <i class="universal access icon"></i>
+                        Public Access (View Map)
+                    </button>
                 </div>
-                <div class="login-hint">Please use your @depauw.edu account</div>
+                <div class="login-hint">Please use your @depauw.edu account. Or use Public Access to browse this week’s events without signing in.</div>
             </div>
         </div>
     </section>
@@ -295,10 +284,10 @@
           <h2 id="event-detail-title" class="event-detail-title"></h2>
           <div class="event-detail-meta" id="event-detail-meta"></div>
           <div class="event-actions">
-            <button id="event-interest-btn" class="btn-interest" type="button"><i class="heart outline icon"></i> Save event</button>
-            
-            <button id="event-report-btn" class="btn-report" type="button"><i class="flag outline icon"></i> Report</button>
+            <button id="event-interest-btn" class="btn-interest" type="button"><i class="bookmark outline icon"></i> Save</button>
+            <button id="event-rsvp-btn" class="ui button primary" type="button">RSVP</button>
           </div>
+          <div id="event-rsvp-note" class="rsvp-note" style="display:none;">RSVP is required for this event.</div>
 
           <div class="section-block">
             <div class="section-header">
@@ -322,11 +311,11 @@
             </div>
           </div>
 
-          <div class="section-block">
+          <div class="section-block" id="interested-section">
             <div class="section-title-strong">See Who Is Interested</div>
             <div class="interested-row">
               <div><span id="event-interest-count">0</span> people are interested in this event</div>
-              <button id="event-interest-btn-2" class="btn-interest" type="button"><i class="heart outline icon"></i> Save event</button>
+              <button id="event-interest-btn-2" class="btn-interest" type="button"><i class="bookmark outline icon"></i> Save</button>
             </div>
           </div>
 
@@ -385,11 +374,11 @@
     </div>
 
     <!-- Filter Panel Modal -->
-    <div id="filter-modal" class="filter-modal" aria-hidden="true" role="dialog" aria-label="Filter results" style="display:none;">
+    <div id="filter-modal" class="filter-modal" aria-hidden="true" role="dialog" aria-label="Filter by" style="display:none;">
       <div class="filter-backdrop" id="filter-backdrop"></div>
       <div class="filter-sheet" role="document">
         <div class="filter-header">
-          <div class="filter-title-strong">Filter results</div>
+          <div class="filter-title-strong">Filter by</div>
           <button id="close-filter-btn" class="filter-close" aria-label="Close">&times;</button>
         </div>
         <div class="filter-body">
@@ -433,7 +422,6 @@
           <div class="form-row" id="report-event-row" style="display:none;">
             <label>Event Title</label>
             <input id="report-event-title" type="text" placeholder="Event title" />
-            <div style="color:#6b7280;font-size:12px;">If you clicked Report from an event, this may be prefilled.</div>
           </div>
           <div class="form-row" id="report-event-org-row" style="display:none;">
             <label>Event Organizer</label>
