@@ -39,7 +39,8 @@ const userProfileView = document.getElementById("user-profile") || document.getE
 const attendeeView = document.getElementById('attendee-view');
 const exploreView = document.getElementById('explore-view');
 const appLoading = document.getElementById('app-loading');
-// Fallback: if auth takes too long, show login instead of spinner
+
+// fallback: if auth takes too long, show login instead of spinner
 let loaderFallback = setTimeout(() => {
     try { if (appLoading) appLoading.style.display = 'none'; } catch {}
     try { if (attendeeView) attendeeView.style.display = 'none'; } catch {}
@@ -61,20 +62,19 @@ const avatarUploadBtn = document.getElementById("avatar-upload-btn");
 const avatarFileInput = document.getElementById("avatar-file");
 const railAvatarImg = document.getElementById('rail-avatar');
 
-// Configure Google provider with domain hint for depauw.edu
+// configure Google provider with depauw.edu
 const provider = new GoogleAuthProvider();
 provider.setCustomParameters({ hd: 'depauw.edu', prompt: 'select_account' });
 
-// Set persistence early to avoid doing async work inside the click handler,
-// which helps prevent popup blockers from triggering.
+// set persistence early to avoid doing async work inside the click handler
 try { setPersistence(auth, browserLocalPersistence); } catch {}
 
 
-// Track intent and optional reason when the user chooses org login.
+// track intent and optional reason when the user chooses org login.
 let orgLoginIntent = false;
 let orgLoginReason = '';
 
-// Handle redirect-based sign-in results (e.g., Safari popup restrictions)
+// handle redirect-based sign-in results
 try {
     getRedirectResult(getAuth())
         .then(async (result) => {
@@ -128,22 +128,18 @@ const signInWithDePauwGoogle = async (e, options = { orgIntent: false, reason: '
     orgLoginIntent = !!options.orgIntent;
     orgLoginReason = options.reason || '';
     try {
-        // Call popup immediately after the user gesture to avoid blockers
         const result = await signInWithPopup(auth, provider);
-
-        // Enforce domain on the client for UX (rules still enforce server-side)
         const email = result.user?.email || "";
         if (!email.toLowerCase().endsWith("@depauw.edu")) {
             await signOut(auth);
             throw { code: 'auth/invalid-domain' };
         }
 
-        // Read secure role from custom claims (set by Admin SDK), fallback to 'student'
-        // Note: This does NOT grant roles; it only mirrors the server-assigned role for UI.
+        // read secure role from custom claims (set by Admin SDK), fallback to 'student'
         const token = await result.user.getIdTokenResult(true);
         const secureRole = (token.claims && token.claims.role) ? String(token.claims.role) : 'student';
 
-        // Only write the signed-in user's own document; never trust client-selected role
+        // only write the signed-in user's own document
         const docRef = doc(db, "users", result.user.uid);
         await setDoc(docRef, {
             email: result.user.email,
@@ -151,7 +147,7 @@ const signInWithDePauwGoogle = async (e, options = { orgIntent: false, reason: '
             role: secureRole,
             createdAt: serverTimestamp()
         }, { merge: true });
-        // If user intended organizer login but is not yet approved, create a role request
+        // if user intended organizer login but is not yet approved, create a role request
         if (orgLoginIntent && secureRole !== 'organizer') {
             try {
                 const reqRef = doc(db, 'roleRequests', result.user.uid);
@@ -166,10 +162,8 @@ const signInWithDePauwGoogle = async (e, options = { orgIntent: false, reason: '
                     }, { merge: true });
                 }
             } catch (reqErr) { /* silent */ }
-            // Do NOT sign the user out; keep them signed in as student
-            // UI will continue as normal; organizer features remain hidden until approved
+          
         }
-        // UI will update via onAuthStateChanged
     } catch (error) {
         const code = error?.code || 'auth/unknown';
         UIErrorMessage.innerHTML = formatErrorMessage(code);
@@ -192,7 +186,7 @@ if (orgLoginBtn) {
     });
 }
 
-// Public Access: view-only mode, no auth required
+// public mode
 if (publicAccessBtn) {
     publicAccessBtn.addEventListener('click', () => {
         try { clearTimeout(loaderFallback); } catch {}
@@ -211,7 +205,7 @@ if (publicAccessBtn) {
     });
 }
 
-// Logout handler
+// logout
 if (logoutBtn) {
     logoutBtn.addEventListener('click', async () => {
         try {
@@ -266,11 +260,11 @@ onAuthStateChanged(auth, async (user) => {
             if (requestOrgBtn) requestOrgBtn.style.display = 'inline-block';
         }
     } else {
-        // Remove rail spacing when logged out
+        // remove rail spacing when logged out
         try { document.body.classList.remove('with-rail'); } catch {}
-        // Hide the left rail on sign-out
+        // hide the left rail on sign-out
         try { const rail = document.getElementById('left-rail'); if (rail) rail.style.display = 'none'; } catch {}
-        // If public mode is active, keep showing the attendee view; otherwise show login
+        // if public mode is active, keep showing the attendee view; otherwise show login
         if (window.PUBLIC_MODE) {
             try { document.body.classList.add('public-mode'); } catch {}
             if (attendeeView) attendeeView.style.display = 'grid';
@@ -290,9 +284,9 @@ onAuthStateChanged(auth, async (user) => {
         if (orgNameEditRow) orgNameEditRow.style.display = 'none';
     }
 
-    // Only attempt Firestore read when user is present
+    // only attempt firestore read when user is present
     if (user?.uid) {
-        // Refresh token to get up-to-date claims after sign-in
+        // refresh token to get up-to-date claims after sign-in
         try {
             await user.getIdToken();
         } catch {}
@@ -325,9 +319,9 @@ onAuthStateChanged(auth, async (user) => {
     }
 });
 
-// Removed redirect handlers and extra safety net to keep auth simple
+// removed redirect handlers and extra safety net to keep auth simple
 
-// Avatar upload handlers
+// avatar upload handlers
 if (avatarUploadBtn && avatarFileInput) {
     avatarUploadBtn.addEventListener('click', () => {
         avatarFileInput.click();
@@ -353,15 +347,12 @@ if (avatarUploadBtn && avatarFileInput) {
             const user = auth.currentUser;
             if (!user) throw new Error('not-signed-in');
 
-            // Path: profileImages/{uid}
             const path = `profileImages/${user.uid}`;
             const ref = storageRef(storage, path);
 
-            // Upload file
             avatarUploadBtn.classList.add('loading');
             await uploadBytes(ref, file, { contentType: file.type });
 
-            // Get download URL and save to user doc
             const url = await getDownloadURL(ref);
             if (avatarImg) avatarImg.src = url;
             if (railAvatarImg) { railAvatarImg.src = url; railAvatarImg.style.display = 'block'; }
@@ -398,7 +389,7 @@ const formatErrorMessage = (errorCode) => {
     return message || "Sign in failed. Please try again.";
 };
 
-// Handle explicit in-profile "Request Organizer Access" button
+// handle in-profile "Request Organizer Access" button
 if (requestOrgBtn) {
     requestOrgBtn.addEventListener('click', async () => {
         const user = auth.currentUser;
@@ -429,10 +420,8 @@ if (requestOrgBtn) {
     });
 }
 
-// If a hero image path is provided in Storage, resolve it to a download URL
-// (Removed unused dynamic Storage image loader for non-existent hero/logo IDs)
 
-// Organizer can edit Organization Name via inline UI
+//organization edit name via inline UI
 function showOrgNameEdit() {
     if (!orgNameEditRow) return;
     const current = (userNameText?.textContent || '').trim();
